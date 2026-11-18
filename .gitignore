@@ -1,0 +1,24 @@
+# SQLite Databases
+*.db
+*.db-shm
+*.db-wal
+ogk_system.db*
+agent_cache.db*
+
+# Python cache & artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.spec
+build/
+dist/
+.venv/
+env/
+venv/
+.idea/
+.vscode/
+
+# Local runtime data
+ogk_agent_data/
+*.log
+
