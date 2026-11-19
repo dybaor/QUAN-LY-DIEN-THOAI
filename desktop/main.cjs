@@ -42,9 +42,17 @@ function openGoogle(query, isolated) {
             webPreferences: { session: isolated, sandbox: true, devTools: false },
         });
         googleWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+        googleWindow.webContents.on('will-navigate', (event, url) => {
+            if (!googleNavigation(url)) event.preventDefault();
+        });
         googleWindow.on('closed', () => { googleWindow = null; });
     }
-    googleWindow.loadURL(googleSearch(query).href).catch(() => {});
+    const window = googleWindow;
+    return window.loadURL(googleSearch(query).href).then(() => true, error => {
+        if (error.code === 'ERR_ABORTED' || window.isDestroyed()) return;
+        window.close();
+        return false;
+    });
 }
 
 app.whenReady().then(() => {
@@ -78,8 +86,9 @@ app.whenReady().then(() => {
         const trusted = event => event.sender === mainWindow.webContents &&
             event.senderFrame === mainWindow.webContents.mainFrame &&
             event.senderFrame.url === entry;
-        ipcMain.on('ogk:google-search', (event, query) => {
-            if (trusted(event) && typeof query === 'string' && query.length <= 500) openGoogle(query, isolated);
+        ipcMain.handle('ogk:google-search', (event, query) => {
+            if (trusted(event) && typeof query === 'string' && query.length <= 500) return openGoogle(query, isolated);
+            return false;
         });
         ipcMain.on('ogk:google-close', event => {
             if (trusted(event) && googleWindow && !googleWindow.isDestroyed()) googleWindow.close();

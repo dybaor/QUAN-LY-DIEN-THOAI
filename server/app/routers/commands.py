@@ -1,14 +1,15 @@
 import json
 from uuid import uuid4
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Depends
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Session
 from ..database import SessionLocal, get_db
 from ..daily_time import adjust_today
-from ..models import Device, Policy, ChildWindowLock
+from ..models import AgentDailyUsage, Device, Policy, ChildWindowLock
 from ..websocket_manager import manager
 
 router = APIRouter(tags=["Commands & WebSocket"])
@@ -33,6 +34,8 @@ class HeartbeatRequest(BaseModel):
     device_id: str
     status: str = "online"
     current_policy_version: Optional[int] = 1
+    usage_day: Optional[date] = None
+    used_seconds: Optional[int] = Field(default=None, ge=0, le=86400)
 
 class ConsentResponseModel(BaseModel):
     feature: str = "screen"
@@ -60,6 +63,16 @@ def receive_heartbeat(req: HeartbeatRequest, db: Session = Depends(get_db)):
     device = db.query(Device).filter(Device.id == req.device_id).first()
     child_id = device.child_id if device else 1
     policy = db.query(Policy).filter(Policy.child_id == child_id).first()
+    if policy and req.usage_day == datetime.now().date() and req.used_seconds is not None:
+        usage = insert(AgentDailyUsage).values(
+            child_id=child_id, day=req.usage_day, device_id=req.device_id,
+            used_seconds=req.used_seconds,
+        )
+        db.execute(usage.on_conflict_do_update(
+            index_elements=[AgentDailyUsage.child_id, AgentDailyUsage.day, AgentDailyUsage.device_id],
+            set_={"used_seconds": func.max(AgentDailyUsage.used_seconds, usage.excluded.used_seconds)},
+        ))
+        db.commit()
     need_update = False
     if policy and req.current_policy_version is not None:
         if policy.version > req.current_policy_version:

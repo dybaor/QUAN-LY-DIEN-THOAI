@@ -4,6 +4,8 @@ import time
 import shutil
 import hashlib
 import subprocess
+from uuid import uuid4
+import psutil
 import pytest
 from pathlib import Path
 
@@ -12,13 +14,13 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "agent"))
 
 from blocker import ProcessBlocker
-from local_cache import local_cache
+from local_cache import LocalCache
 
 
-def test_process_blocker_by_sha256(tmp_path):
+def test_process_blocker_by_sha256(tmp_path, monkeypatch):
     """
     Ca kiểm thử Chuyên đề:
-    1. Tạo file thực thi giả lập từ python.exe, tính SHA-256.
+    1. Tạo file thực thi thử nghiệm có SHA-256 riêng.
     2. Đổi tên file giả lập thành 'totally_different_game.exe' (chứng minh TUYỆT ĐỐI không dựa vào tên file).
     3. Nạp SHA-256 vào chính sách cấm trong cache SQLite.
     4. Khởi chạy tiến trình giả lập.
@@ -26,11 +28,15 @@ def test_process_blocker_by_sha256(tmp_path):
     6. Xác minh tiến trình bị tiêu diệt trong < 2 giây và ghi nhận sự kiện vi phạm vào SQLite.
     """
     blocker = ProcessBlocker()
+    local_cache = LocalCache(db_path=str(tmp_path / "agent_cache.db"))
+    monkeypatch.setattr("blocker.local_cache", local_cache)
 
-    # 1. Tạo file thực thi giả lập bằng cách sao chép python.exe
-    src_python = sys.executable
+    # Chạy ping loopback để có tiến trình thực thi độc lập với môi trường Python.
+    source_exe = Path(os.environ["SystemRoot"]) / "System32" / "ping.exe"
     dummy_exe = tmp_path / "totally_different_game.exe"
-    shutil.copy2(src_python, dummy_exe)
+    shutil.copy2(source_exe, dummy_exe)
+    with dummy_exe.open("ab") as executable:
+        executable.write(uuid4().bytes)
     assert dummy_exe.exists(), "Không thể tạo file thực thi giả lập"
 
     # 2. Tính SHA-256 của file thực thi giả lập
@@ -51,13 +57,18 @@ def test_process_blocker_by_sha256(tmp_path):
 
     # 4. Khởi chạy tiến trình giả lập với tên đã bị đổi
     proc = subprocess.Popen(
-        [str(dummy_exe), "-c", "import time; time.sleep(30)"],
+        [str(dummy_exe), "-t", "127.0.0.1"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
         creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
     )
     assert proc.poll() is None, "Tiến trình giả lập phải đang chạy"
     time.sleep(0.3)  # Đảm bảo tiến trình đã nạp hoàn chỉnh trên Windows PE Loader
 
     try:
+        candidate = psutil.Process(proc.pid)
+        candidate.info = candidate.as_dict(attrs=["pid", "name"])
+        monkeypatch.setattr(psutil, "process_iter", lambda attrs: iter([candidate]))
         start_t = time.time()
         # 5. Kích hoạt bộ kiểm tra và cưỡng chế
         blocker.check_and_enforce()
@@ -74,8 +85,12 @@ def test_process_blocker_by_sha256(tmp_path):
         assert elapsed < 2.5, f"Thời gian dừng tiến trình ({elapsed:.2f}s) vượt quá tiêu chuẩn"
 
         # 6. Xác minh bản ghi sự kiện vi phạm đã được lưu vào SQLite queue
-        events = local_cache.peek_events(limit=20)
-        violation_events = [e for e in events if e.get("type") == "blocked_app"]
+        deadline = time.monotonic() + 2
+        violation_events = []
+        while not violation_events and time.monotonic() < deadline:
+            violation_events = [e for e in local_cache.peek_events(limit=20) if e.get("type") == "blocked_app"]
+            if not violation_events:
+                time.sleep(0.05)
         assert len(violation_events) > 0, "Phải có ít nhất 1 sự kiện blocked_app được lưu vào SQLite cache"
         
         last_ev = violation_events[-1]

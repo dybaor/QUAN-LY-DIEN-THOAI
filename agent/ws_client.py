@@ -10,6 +10,7 @@ import asyncio
 import json
 import threading
 import time
+from datetime import date
 from typing import Any, Dict, List, Optional
 import requests
 import websockets
@@ -27,6 +28,7 @@ class AgentNetworkClient:
         self.child_id = local_cache.child_id
         self.is_online = False
         self._stop_event = threading.Event()
+        self._flush_lock = threading.Lock()
         self._ws_thread: Optional[threading.Thread] = None
         self._current_ws = None
         self._loop = None
@@ -81,10 +83,13 @@ class AgentNetworkClient:
         """Gửi heartbeat lên server mỗi 60s và đồng bộ chính sách khi có version mới."""
         policy = local_cache.get_policy()
         ver = policy.get("version", 1) if policy else 1
+        day = date.today()
         payload = {
             "device_id": self.device_id,
             "status": "online",
             "current_policy_version": ver,
+            "usage_day": day.isoformat(),
+            "used_seconds": local_cache.get_today_usage_seconds(day),
         }
         try:
             resp = requests.post(f"{self.server_url}/heartbeat", json=payload, timeout=5.0)
@@ -117,6 +122,10 @@ class AgentNetworkClient:
     def flush_events(self, limit: int = 50) -> int:
         """Đẩy các sự kiện ngoại tuyến lên Server theo lô 7 trường chuẩn.
         Chỉ xóa khỏi SQLite khi Server trả về HTTP 200 hoặc 201."""
+        with self._flush_lock:
+            return self._flush_events(limit)
+
+    def _flush_events(self, limit: int) -> int:
         events = local_cache.peek_events(limit)
         if not events:
             return 0
@@ -192,7 +201,7 @@ class AgentNetworkClient:
                                 print(f"[WS_COMMAND] Nhận lệnh cancel_shutdown! Hủy lệnh...")
                                 blocker.cancel_shutdown()
                             elif cmd in ("time_deducted", "deduct_time"):
-                                deduct_min = data.get("deduct_min") or data.get("minutes") or 15
+                                deduct_min = data.get("deduct_min", data.get("minutes", 15))
                                 print(f"[WS_COMMAND] Nhận thông báo trừ giờ: -{deduct_min} phút!")
                                 self.sync_policy()
                                 if self.deduct_callback:

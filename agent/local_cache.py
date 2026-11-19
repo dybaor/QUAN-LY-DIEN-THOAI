@@ -92,8 +92,8 @@ class LocalCache:
                         CREATE TABLE IF NOT EXISTS cached_policy (
                             child_id INTEGER PRIMARY KEY,
                             version INTEGER DEFAULT 1,
-                            daily_quota_weekday_min INTEGER DEFAULT 90,
-                            daily_quota_weekend_min INTEGER DEFAULT 120,
+                            daily_quota_weekday_min INTEGER DEFAULT 120,
+                            daily_quota_weekend_min INTEGER DEFAULT 180,
                             schedule_matrix TEXT DEFAULT '',
                             blocked_apps TEXT DEFAULT '',
                             blocked_domains TEXT DEFAULT '',
@@ -142,8 +142,8 @@ class LocalCache:
         """Lưu bản sao chính sách vào cache SQLite."""
         child_id = policy.get("child_id", self.child_id)
         version = policy.get("version", 1)
-        weekday_quota = policy.get("daily_quota_weekday_min", 90)
-        weekend_quota = policy.get("daily_quota_weekend_min", 120)
+        weekday_quota = policy.get("daily_quota_weekday_min", 120)
+        weekend_quota = policy.get("daily_quota_weekend_min", 180)
         schedule_matrix = policy.get("schedule_matrix", "1" * 336)
         blocked_apps = policy.get("blocked_apps", "")
         blocked_domains = policy.get("blocked_domains", "")
@@ -298,8 +298,8 @@ class LocalCache:
             except Exception:
                 return 0
 
-    def get_today_usage_seconds(self) -> int:
-        today = datetime.date.today().isoformat()
+    def get_today_usage_seconds(self, day: Optional[datetime.date] = None) -> int:
+        today = (day or datetime.date.today()).isoformat()
         with self._lock:
             try:
                 with self._get_connection() as conn:

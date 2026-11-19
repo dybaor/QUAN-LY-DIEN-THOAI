@@ -52,8 +52,8 @@ class Policy(Base):
     lock_pin = Column(String(50), default=None, nullable=True)               # Mật khẩu / mã PIN khóa máy (mặc định NULL)
     lock_password_hash = Column(String(255), default=None, nullable=True)   # Mã băm SHA-256 mật khẩu bảo vệ (mặc định NULL)
     version = Column(Integer, default=1)  # Đánh số phiên bản chính sách
-    daily_quota_weekday_min = Column(Integer, default=90)  # Phút ngày thường (mặc định 90p)
-    daily_quota_weekend_min = Column(Integer, default=120) # Phút cuối tuần (mặc định 120p)
+    daily_quota_weekday_min = Column(Integer, default=120)
+    daily_quota_weekend_min = Column(Integer, default=180)
     schedule_matrix = Column(String, default="1"*336)       # Ma trận 7x48 = 336 ký tự (1: cho phép, 0: khóa)
     blocked_apps = Column(String, default="")              # Danh sách SHA-256 / tên app cấm
     blocked_domains = Column(String, default="")           # Danh sách domain cấm
@@ -79,6 +79,14 @@ class WebDailyUsage(Base):
     day = Column(Date, primary_key=True)
     used_seconds = Column(Float, nullable=False)
     last_seen = Column(Float, nullable=False)
+
+
+class AgentDailyUsage(Base):
+    __tablename__ = "agent_daily_usage"
+    child_id = Column(Integer, ForeignKey("children.id"), primary_key=True)
+    day = Column(Date, primary_key=True)
+    device_id = Column(String(64), primary_key=True)
+    used_seconds = Column(Integer, nullable=False)
 
 
 class ChildWindowLock(Base):

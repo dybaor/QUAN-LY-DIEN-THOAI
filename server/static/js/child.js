@@ -727,7 +727,10 @@ function openInAppBrowser(url, title) {
   search.searchParams.set('udm', '14');
   logAccess(search.searchParams.get('q') || title, 'Tìm kiếm', 'allowed');
   if (window.ogkDesktop) {
-    window.ogkDesktop.searchGoogle(search.searchParams.get('q') || '');
+    const showSearchError = () => showToast("Google Tìm kiếm chưa tải được. Hãy thử lại sau.");
+    Promise.resolve(window.ogkDesktop.searchGoogle(search.searchParams.get('q') || ''))
+      .then(opened => { if (opened === false) showSearchError(); })
+      .catch(showSearchError);
     return;
   }
 
@@ -1182,9 +1185,10 @@ async function respondScreenConsent(approved) {
     return;
   }
 
-  // Nếu đồng ý, xin quyền stream màn hình tab trực tiếp (Auto Share Tab)
+  if (isSharingScreenActive || !ws || ws.readyState !== WebSocket.OPEN) return;
+  const consentSocket = ws;
   try {
-    screenStream = await navigator.mediaDevices.getDisplayMedia({
+    const stream = await navigator.mediaDevices.getDisplayMedia({
       video: {
         displaySurface: "browser",
         cursor: "always",
@@ -1196,6 +1200,11 @@ async function respondScreenConsent(approved) {
       systemAudio: "exclude"
     });
 
+    if (ws !== consentSocket || consentSocket.readyState !== WebSocket.OPEN || isSharingScreenActive) {
+      stream.getTracks().forEach(track => track.stop());
+      return;
+    }
+    screenStream = stream;
     isSharingScreenActive = true;
 
     // Thông báo cho server là đã đồng ý
@@ -1214,6 +1223,7 @@ async function respondScreenConsent(approved) {
     const video = document.createElement('video');
     video.srcObject = screenStream;
     await video.play();
+    if (screenStream !== stream) return;
 
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
@@ -1256,8 +1266,8 @@ async function respondScreenConsent(approved) {
           // Xuất Binary Blob JPEG 0.5 và gửi thẳng qua WebSocket
           canvas.toBlob((blob) => {
             try {
-              if (isSharingScreenActive && blob && ws && ws.readyState === WebSocket.OPEN && ws.bufferedAmount === 0) {
-                ws.send(blob);
+              if (screenStream === stream && blob && consentSocket.readyState === WebSocket.OPEN && consentSocket.bufferedAmount === 0) {
+                consentSocket.send(blob);
               }
             } catch (sendErr) {
               console.warn("Lỗi gửi binary frame:", sendErr);
@@ -1282,9 +1292,10 @@ async function respondScreenConsent(approved) {
     showToast("✓ Đang chia sẻ màn hình trực tiếp với Ba Mẹ.");
   } catch (err) {
     console.error("Không thể chia sẻ màn hình:", err);
-    isSharingScreenActive = false;
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
+    if (ws !== consentSocket || consentSocket.readyState !== WebSocket.OPEN) return;
+    stopScreenShare();
+    if (consentSocket.readyState === WebSocket.OPEN) {
+      consentSocket.send(JSON.stringify({
         type: 'consent_response',
         approved: false,
         reason: 'Không thể truy cập màn hình: ' + err.message

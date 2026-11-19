@@ -6,7 +6,7 @@ OGK SafeSearch & DoH Canary Controller (Thành viên B)
 """
 
 from typing import Dict, Optional, Set
-from dnslib import A, QTYPE, RCODE, RR, DNSRecord
+from dnslib import A, AAAA, QTYPE, RCODE, RR, DNSRecord
 
 # Danh sách IP SafeSearch chính thức
 SAFESEARCH_MAP: Dict[str, str] = {
@@ -21,6 +21,8 @@ SAFESEARCH_MAP: Dict[str, str] = {
     "bing.com": "204.79.197.220",
     "www.bing.com": "204.79.197.220",
 }
+GOOGLE_SAFESEARCH_IPV4 = "216.239.38.120"
+GOOGLE_SAFESEARCH_IPV6 = "2001:4860:4802:32::78"
 
 # Danh sách miền Canary DoH
 DOH_CANARY_DOMAINS: Set[str] = {
@@ -45,10 +47,13 @@ def check_safesearch_or_doh(request: DNSRecord) -> Optional[bytes]:
         return reply.pack()
 
     # 2. Cưỡng chế SafeSearch -> Rewrite IP
-    if qname in SAFESEARCH_MAP and qtype in ("A", "ANY"):
+    if qname in SAFESEARCH_MAP:
         safe_ip = SAFESEARCH_MAP[qname]
         reply = request.reply()
-        reply.add_answer(RR(request.q.qname, QTYPE.A, rdata=A(safe_ip), ttl=300))
+        if qtype in ("A", "ANY"):
+            reply.add_answer(RR(request.q.qname, QTYPE.A, rdata=A(safe_ip), ttl=300))
+        if qtype in ("AAAA", "ANY") and safe_ip == GOOGLE_SAFESEARCH_IPV4:
+            reply.add_answer(RR(request.q.qname, QTYPE.AAAA, rdata=AAAA(GOOGLE_SAFESEARCH_IPV6), ttl=300))
         return reply.pack()
 
     return None

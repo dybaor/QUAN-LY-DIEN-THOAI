@@ -28,7 +28,7 @@ fi
 
 PYTHON="$ROOT_DIR/.venv/bin/python"
 
-if ! "$PYTHON" -c "import fastapi, uvicorn, sqlalchemy, jose, jinja2, multipart, argon2, psutil, requests, websockets" >/dev/null 2>&1; then
+if ! "$PYTHON" -c "import fastapi, uvicorn.protocols.websockets.websockets_sansio_impl, sqlalchemy, jose, jinja2, multipart, argon2, psutil, requests, websockets" >/dev/null 2>&1; then
     echo "Dang cai dat cac thu vien Backend..."
     "$PYTHON" -m pip install --upgrade pip
     "$PYTHON" -m pip install -r "$ROOT_DIR/requirements.txt"

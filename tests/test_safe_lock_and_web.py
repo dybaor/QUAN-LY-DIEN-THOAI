@@ -129,7 +129,7 @@ class TestSafeLockAndWeb(unittest.TestCase):
         self.assertIn("rightDashboardCol", html)
         self.assertIn("btnQuickActions", html)
         self.assertIn("quickActionsMenu", html)
-        self.assertIn("Thời gian biểu hoạt động", html)
+        self.assertIn('id="todayTimeline"', html)
         self.assertNotIn("Daily Quotas", html)
         self.assertNotIn("navigator.mediaDevices", html, "Parent dashboard must never call navigator.mediaDevices")
         self.assertNotIn("getDisplayMedia", html, "Parent dashboard must never call getDisplayMedia")

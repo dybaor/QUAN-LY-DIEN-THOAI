@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ShellLauncherConfiguration
+    xmlns="http://schemas.microsoft.com/ShellLauncher/2018/Configuration"
+    xmlns:V2="http://schemas.microsoft.com/ShellLauncher/2019/Configuration">
+    <Profiles>
+        <DefaultProfile>
+            <Shell Shell="%SystemRoot%\explorer.exe" />
+        </DefaultProfile>
+        <Profile Id="{39697F6B-4E95-479D-B23B-6BE9AE133E89}" Name="OGK Child">
+            <Shell Shell="&quot;%ProgramFiles%\OGKChild\OGKChild.exe&quot;" V2:AppType="Desktop" V2:AllAppsFullScreen="true">
+                <DefaultAction Action="RestartShell" />
+            </Shell>
+        </Profile>
+    </Profiles>
+    <Configs>
+        <Config>
+            <Account Name=".\OGKChild" />
+            <Profile Id="{39697F6B-4E95-479D-B23B-6BE9AE133E89}" />
+        </Config>
+    </Configs>
+</ShellLauncherConfiguration>

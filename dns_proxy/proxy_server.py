@@ -109,17 +109,19 @@ class DNSProxyEngine:
             print(f"[DOMAIN_BLOCKED] Chặn truy cập web cấm: {qname} (0.0.0.0)")
             self.report_violation(qname)
             reply = req.reply()
-            reply.add_answer(RR(req.q.qname, QTYPE.A, rdata=A("0.0.0.0"), ttl=60))
+            if req.q.qtype in (QTYPE.A, QTYPE.ANY):
+                reply.add_answer(RR(req.q.qname, QTYPE.A, rdata=A("0.0.0.0"), ttl=60))
+            else:
+                reply.header.rcode = RCODE.NXDOMAIN
             return reply.pack()
 
         # 3. Chuyển tiếp Upstream DNS 8.8.8.8
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.settimeout(3.0)
-            sock.sendto(data, (self.upstream_dns, self.upstream_port))
-            resp, _ = sock.recvfrom(4096)
-            sock.close()
-            return resp
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                sock.settimeout(3.0)
+                sock.connect((self.upstream_dns, self.upstream_port))
+                sock.send(data)
+                return sock.recv(4096)
         except Exception:
             reply = req.reply()
             reply.header.rcode = RCODE.SERVFAIL
@@ -162,5 +164,7 @@ def start_dns_server(host="127.0.0.1", port=53):
 
 
 if __name__ == "__main__":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="replace")
     start_dns_server()
 

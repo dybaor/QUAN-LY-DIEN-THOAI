@@ -24,14 +24,14 @@ if not exist ".venv\Scripts\python.exe" (
 )
 
 set "PYTHON=%~dp0.venv\Scripts\python.exe"
-"%PYTHON%" -c "import fastapi, uvicorn, sqlalchemy, jose, jinja2, multipart, argon2, psutil, requests, websockets" >nul 2>nul
+"%PYTHON%" -c "import fastapi, uvicorn.protocols.websockets.websockets_sansio_impl, sqlalchemy, jose, jinja2, multipart, argon2, psutil, requests, websockets" >nul 2>nul
 if errorlevel 1 (
     echo Dang cai dat cac thu vien can thiet...
     "%PYTHON%" -m pip install -r "%~dp0requirements.txt"
     if errorlevel 1 goto :install_failed
 )
 
-"%PYTHON%" -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=1)" >nul 2>nul
+call :check_server
 if errorlevel 1 (
     echo Dang khoi dong server...
     start "OGK Server" /D "%~dp0" "%PYTHON%" "%~dp0run_server.py"
@@ -51,11 +51,15 @@ exit /b 0
 
 :wait_for_server
 for /L %%I in (1,1,45) do (
-    "%PYTHON%" -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=1)" >nul 2>nul
+    call :check_server
     if not errorlevel 1 exit /b 0
-    timeout /t 1 /nobreak >nul
+    "%PYTHON%" -c "import time; time.sleep(1)"
 )
 exit /b 1
+
+:check_server
+"%PYTHON%" -c "import json, sys, urllib.request; sys.exit(json.load(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=1)).get('system') != 'OGK-Server')" >nul 2>nul
+exit /b %errorlevel%
 
 :venv_failed
 echo Khong tao duoc moi truong Python.

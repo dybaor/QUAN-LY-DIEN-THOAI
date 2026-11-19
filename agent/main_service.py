@@ -25,7 +25,6 @@ import win32service
 import win32serviceutil
 
 from blocker import blocker
-from local_cache import local_cache, flush_events_if_online
 from tracker import tracker
 from ws_client import ws_client
 
@@ -77,7 +76,6 @@ class OGKChildAgentService(win32serviceutil.ServiceFramework):
                 flush_counter += 1
                 if flush_counter >= 5:
                     flush_counter = 0
-                    flush_events_if_online()
                     ws_client.send_heartbeat()
 
             except Exception as e:
@@ -120,10 +118,9 @@ def run_debug():
                 flush_counter += 1
                 if flush_counter >= 5:
                     flush_counter = 0
-                    flush_events_if_online()
                     ws_client.send_heartbeat()
             except Exception as loop_err:
-                pass
+                print(f"[LỖI AGENT ENGINE]: {loop_err}")
 
             time.sleep(1)
     except KeyboardInterrupt:

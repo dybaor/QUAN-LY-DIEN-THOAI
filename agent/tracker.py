@@ -149,7 +149,7 @@ class ScreenTimeTracker:
 
         # 4. Cộng dồn vào SQLite
         additional_sec = int(round(delta))
-        if additional_sec > 0:
+        if name and additional_sec > 0:
             local_cache.add_daily_usage(additional_sec)
 
         return delta, False

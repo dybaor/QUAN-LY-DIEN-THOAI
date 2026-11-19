@@ -3,6 +3,19 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { test } = require('node:test');
+const { googleNavigation, googleSearch } = require('../desktop/google.cjs');
+
+test('desktop Google verification returns only to filtered search', () => {
+    const search = googleSearch('pythagorean theorem');
+    const challenge = new URL('/sorry/index', search.origin);
+    challenge.searchParams.set('continue', search.href);
+    assert.equal(googleNavigation(challenge.href)?.href, challenge.href);
+    challenge.searchParams.set('continue', 'https://example.com/search?safe=active&udm=14');
+    assert.equal(googleNavigation(challenge.href), null);
+    assert.equal(googleNavigation('https://www.google.com/url?q=https://example.com'), null);
+    assert.equal(googleNavigation('https://example.com/'), null);
+    assert.equal(googleNavigation('https://www.google.com/search?q=test&safe=off')?.searchParams.get('safe'), 'active');
+});
 
 const root = path.resolve(__dirname, '..');
 const parentHtml = fs.readFileSync(path.join(root, 'server/templates/dashboard.html'), 'utf8');

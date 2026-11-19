@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "server"))
 
 from app.main import app
 from app import daily_time
-from app.routers import policy_events
+from app.routers import commands, policy_events
 
 
 def test_daily_adjustments_and_request_notifications():
@@ -61,6 +61,29 @@ def test_stream_ends_when_child_stops_or_disconnects():
                     child.send_json({"type": "stop_screen_share"})
                     assert parent.receive_json()["cmd"] == "screen_share_stopped"
         assert parent.receive_json()["cmd"] == "screen_share_stopped"
+
+
+def test_agent_heartbeat_updates_both_balances_once():
+    class Clock(datetime):
+        current = datetime(2040, 1, 9, 10)
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.current
+
+    with TestClient(app) as client, patch.object(commands, "datetime", Clock), patch.object(policy_events, "datetime", Clock):
+        day = Clock.current.date().isoformat()
+        for seconds in (63, 63, 15):
+            response = client.post("/heartbeat", json={
+                "device_id": "TEST-DURATION", "usage_day": day, "used_seconds": seconds,
+            })
+            assert response.is_success
+        parent = client.get("/dashboard-stats/1").json()
+        child = client.get("/web-usage/1").json()
+        assert parent["today_seconds"] == child["today_seconds"] == 63
+        assert parent["remaining_seconds"] == child["remaining_seconds"]
+        Clock.current += timedelta(days=1)
+        assert client.get("/web-usage/1").json()["today_seconds"] == 0
 
 def test_manual_lock_persists_across_child_reconnect():
     with TestClient(app) as client:

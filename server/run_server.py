@@ -25,7 +25,10 @@ def main():
     print("  Dashboard Quản trị: http://127.0.0.1:8000")
     print("  Nhấn Ctrl + C để dừng máy chủ an toàn.")
     print("=" * 65)
-    uvicorn.run(app, host="127.0.0.1", port=8000, log_level="info")
+    uvicorn.run(
+        app, host="127.0.0.1", port=8000, log_level="info",
+        ws="websockets-sansio", ws_ping_interval=5, ws_ping_timeout=5,
+    )
 
 if __name__ == "__main__":
     main()

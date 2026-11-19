@@ -465,6 +465,7 @@ def build_server(force: bool = False):
         "--hidden-import=uvicorn.protocols.http.auto",
         "--hidden-import=uvicorn.protocols.websockets",
         "--hidden-import=uvicorn.protocols.websockets.auto",
+        "--hidden-import=uvicorn.protocols.websockets.websockets_sansio_impl",
         "--hidden-import=uvicorn.lifespan",
         "--hidden-import=uvicorn.lifespan.on",
         str(src_file),

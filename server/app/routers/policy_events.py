@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..daily_time import adjust_today, adjustment_minutes
-from ..models import DeviceEvent, Policy, Child, MonitoringSession, AccessHistoryLog, WebDailyUsage, DailyTimeAdjustment, ChildWindowLock
+from ..models import AgentDailyUsage, DeviceEvent, Policy, Child, MonitoringSession, AccessHistoryLog, WebDailyUsage, ChildWindowLock
 from ..websocket_manager import manager
 
 router = APIRouter(tags=["Policies & Events"])
@@ -708,18 +708,21 @@ def daily_usage_seconds(child_id: int, day: date, db: Session) -> int:
     # Agent timestamps are stored as naive UTC; day boundaries use server local time.
     start_utc = datetime.utcfromtimestamp(start.timestamp())
     end_utc = datetime.utcfromtimestamp(end.timestamp())
-    agent_seconds = db.query(func.sum(DeviceEvent.duration_sec)).filter(
+    live_usage = db.query(AgentDailyUsage).filter_by(child_id=child_id, day=day)
+    measured_seconds = live_usage.with_entities(func.sum(AgentDailyUsage.used_seconds)).scalar() or 0
+    legacy_seconds = db.query(func.sum(DeviceEvent.duration_sec)).filter(
         DeviceEvent.child_id == child_id, DeviceEvent.type == "app_stop",
         DeviceEvent.ts >= start_utc, DeviceEvent.ts < end_utc,
+        DeviceEvent.device_id.not_in(live_usage.with_entities(AgentDailyUsage.device_id).statement),
     ).scalar() or 0
     web = db.get(WebDailyUsage, (child_id, day))
     # Both sources can observe the same activity, so avoid adding overlapping usage.
-    return max(0, agent_seconds, int(web.used_seconds) if web else 0)
+    return max(0, measured_seconds + legacy_seconds, int(web.used_seconds) if web else 0)
 
 
 def time_snapshot(child_id: int, day: date, db: Session) -> dict:
     policy = db.query(Policy).filter(Policy.child_id == child_id).first()
-    quota = 90
+    quota = 180 if day.weekday() >= 5 else 120
     if policy:
         quota = policy.daily_quota_weekend_min if day.weekday() >= 5 else policy.daily_quota_weekday_min
     adjustment = adjustment_minutes(db, child_id, day)
