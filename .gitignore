@@ -21,4 +21,4 @@ venv/
 # Local runtime data
 ogk_agent_data/
 *.log
-
+.DS_Store
