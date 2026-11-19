@@ -94,3 +94,27 @@ def test_manual_lock_persists_across_child_reconnect():
         finally:
             assert client.post("/commands/send", json={**lock, "action": "unlock_window"}).is_success
         assert client.get("/web-usage/1").json()["lock_reason"] is None
+
+
+def test_search_block_http_fallback_notifies_parent_once():
+    with TestClient(app) as client, client.websocket_connect("/ws/parent_search_test") as parent:
+        event = {
+            "ts": datetime.now().isoformat(),
+            "device_id": "CHILD-PC",
+            "child_id": 1,
+            "type": "query_filter",
+            "duration_sec": 0,
+        }
+        assert client.post("/events/", json={**event, "subject": "already sent"}).status_code == 201
+        assert client.post("/events/", json={
+            **event, "subject": "phim người lớn", "notify_parent": True,
+        }).status_code == 201
+        alert = parent.receive_json()
+        assert (alert["cmd"], alert["target_type"], alert["target_name"]) == (
+            "violation_alert", "keyword", "phim người lớn",
+        )
+        assert client.post("/events/", json={
+            **event, "type": "blocked_domain", "subject": "badsite-adult.test", "notify_parent": True,
+        }).status_code == 201
+        alert = parent.receive_json()
+        assert (alert["target_type"], alert["target_name"]) == ("web", "badsite-adult.test")

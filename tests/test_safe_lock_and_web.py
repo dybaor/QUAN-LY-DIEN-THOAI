@@ -182,8 +182,8 @@ class TestSafeLockAndWeb(unittest.TestCase):
         self.assertIn('placeholder="Nhập mã PIN của phụ huynh..."', portal_html)
         self.assertIn('type="password"', portal_html)
 
-    def test_realtime_chat_mock_app_and_violation_alert(self):
-        """Kiểm tra tính năng Chat xuyên suốt, Mock App an toàn và Cảnh báo vi phạm thời gian thực."""
+    def test_realtime_chat_and_violation_alert(self):
+        """Kiểm tra tính năng Chat xuyên suốt, Cảnh báo vi phạm thời gian thực."""
         # 1. Kiểm tra Trang con (child_portal.html)
         child_portal_path = os.path.join(BASE_DIR, "server", "templates", "child_portal.html")
         with open(child_portal_path, "r", encoding="utf-8") as f:
@@ -191,7 +191,7 @@ class TestSafeLockAndWeb(unittest.TestCase):
 
         self.assertTrue('id="floatingChatWindow"' in portal_html or 'id="childChatWidget"' in portal_html)
         self.assertTrue('id="floatingChatBtn"' in portal_html or 'id="btnChildChatToggle"' in portal_html)
-        self.assertIn('id="mockAppModal"', portal_html)
+        self.assertNotIn('id="mockAppModal"', portal_html)
         self.assertIn('id="violationBlockModal"', portal_html)
         self.assertIn('toggleChildChat', portal_html)
 
@@ -200,8 +200,7 @@ class TestSafeLockAndWeb(unittest.TestCase):
         with open(child_js_path, "r", encoding="utf-8") as f:
             child_js = f.read()
 
-        self.assertIn('openMockApp', child_js)
-        self.assertIn('triggerViolationAlert', child_js)
+        self.assertIn('reportBlockedSearch', child_js)
         self.assertIn('showViolationBlockModal', child_js)
         self.assertIn('sendChildChatMessage', child_js)
         self.assertIn('violation_alert', child_js)
@@ -341,12 +340,12 @@ class TestSafeLockAndWeb(unittest.TestCase):
         with open(child_js_path, "r", encoding="utf-8") as f:
             child_js = f.read()
 
-        self.assertIn("function handleGoogleOrDomainSearch()", child_js)
+        self.assertIn("function handleGoogleOrDomainSearch(", child_js)
         self.assertIn("function extractDomain(", child_js)
         self.assertIn("function isDomainBlocked(", child_js)
         self.assertIn("igu=1", child_js, "Google search URL phải chứa tham số nhúng igu=1")
         self.assertIn("https://www.google.com/search", child_js)
-        self.assertIn("triggerViolationAlert(", child_js)
+        self.assertIn("reportBlockedSearch(", child_js)
         self.assertIn("showViolationBlockModal(", child_js)
 
     def test_restricted_keywords_filter_and_strict_safesearch(self):
@@ -366,7 +365,7 @@ class TestSafeLockAndWeb(unittest.TestCase):
         self.assertIn("function removeVietnameseTones(", child_js)
 
         # 2. Kiểm tra cờ SafeSearch bắt buộc
-        self.assertIn("safe=active", child_js, "Phải cưỡng chế tham số safe=active")
+        self.assertIn("search.searchParams.set('safe', 'active')", child_js)
         self.assertIn("safe: 'active'", child_js)
         self.assertIn("query_filter", child_js)
 

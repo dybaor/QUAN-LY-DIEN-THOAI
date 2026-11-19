@@ -332,28 +332,42 @@ test('monitor transitions preserve compact idle and expanded live state', () => 
     assert.equal(app.nodes.get('liveScreenImg').classList.contains('hidden'), true);
 });
 
-test('child catalogue only has Google and escapes unmatched text', () => {
+test('child only has one search box and respects locking', () => {
     const app = runtime(childScript, childHtml);
-    app.nodes.get('searchAppInput').value = 'tim kiem';
-    app.run('renderApps()');
-    assert.equal(app.nodes.get('appGrid').children.length, 1);
-    assert.equal(app.nodes.get('appGrid').children[0].attributes['data-id'], 'google_search');
-    app.nodes.get('searchAppInput').value = '<img src=x onerror=alert(1)>';
-    app.run('renderApps()');
-    assert.doesNotMatch(app.nodes.get('appGrid').innerHTML, /<img/);
-    assert.match(app.nodes.get('appGrid').innerHTML, /&lt;img/);
+    const input = app.nodes.get('searchAppInput');
+    assert.equal(app.nodes.has('appGrid'), false);
+    input.value = 'bài tập toán';
+    app.run('waitingForSetup = false; isLocked = true; handleGoogleOrDomainSearch()');
+    assert.match(app.context.testToasts.at(-1)[0], /đang bị khóa/);
+    app.run('isLocked = false; isTimeExpired = true; handleGoogleOrDomainSearch()');
+    assert.match(app.context.testToasts.at(-1)[0], /hết thời gian/);
 });
 
-test('child launch button has an accessible label and respects locking', () => {
+test('blacklisted searches from the portal and Google trigger the same warning', () => {
     const app = runtime(childScript, childHtml);
-    app.run('renderApps(); isLocked = true;');
-    const card = app.nodes.get('appGrid').children[0];
-    assert.match(card.launchButton.attributes['aria-label'], /Mở Google Tìm Kiếm/);
-    card.launchButton.click();
-    assert.match(app.context.testToasts.at(-1)[0], /đang bị khóa/);
-    app.run('isLocked = false; isTimeExpired = true;');
-    card.launchButton.click();
-    assert.match(app.context.testToasts.at(-1)[0], /hết thời gian/);
+    const sent = [];
+    const requests = [];
+    let retrySearch;
+    app.context.window.ogkDesktop = {
+        searchGoogle: () => { throw new Error('Blocked query was opened'); },
+        closeGoogle() {},
+        onSearchAttempt: handler => { retrySearch = handler; },
+    };
+    app.context.fetch = async (url, init) => { requests.push([url, JSON.parse(init.body)]); };
+    app.context.WebSocket = { OPEN: 1 };
+    app.context.socket = { readyState: 1, send: text => sent.push(JSON.parse(text)) };
+    app.run('waitingForSetup = false; ws = socket; setupEventListeners();');
+    app.nodes.get('searchAppInput').value = 'phim người lớn';
+    app.run('handleGoogleOrDomainSearch()');
+    assert.equal(sent[0].action, 'violation_alert');
+    assert.equal(sent[0].target_type, 'keyword');
+    assert.equal(app.nodes.get('violationBlockModal').classList.contains('flex'), true);
+    assert.equal(requests.find(([url]) => url === '/events/')[1].notify_parent, false);
+    app.run('ws = null;');
+    retrySearch('phim nguoi lon');
+    assert.equal(sent.length, 1);
+    assert.equal(requests.filter(([url]) => url === '/events/')[1][1].notify_parent, true);
+    assert.match(app.context.testToasts.at(-1)[0], /hạn chế truy cập/);
 });
 
 test('child remaining-time display uses consistent warning colors', () => {

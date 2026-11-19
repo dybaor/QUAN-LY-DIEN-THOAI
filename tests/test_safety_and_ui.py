@@ -71,60 +71,12 @@ class TestSafetyAndUI(unittest.TestCase):
         self.assertNotIn('def api_search', main_content, "Hàm api_search phải được xóa khỏi main.py")
         self.assertNotIn('fetch_google_search', main_content, "fetch_google_search phải được xóa khỏi main.py")
 
-    # =========================================================================
-    # CA 2: THANH TÌM KIẾM TRÊN TRANG TRẺ CHỈ LỌC LOCAL (LOCAL APP SEARCH)
-    # =========================================================================
-    def test_case_2_local_app_search_and_realtime_filter(self):
-        """Kiểm tra thanh tìm kiếm chỉ dùng để lọc cục bộ danh sách app theo thời gian thực."""
-        child_html_path = SERVER_DIR / "templates" / "child_portal.html"
-        child_html = child_html_path.read_text(encoding="utf-8")
-        
-        # 1. Kiểm tra placeholder và sự kiện oninput
-        self.assertIn('placeholder="Tìm kiếm trên Google…"', child_html)
-        self.assertIn('aria-label="Tìm kiếm trên Google"', child_html)
-        self.assertIn('oninput="filterApps()"', child_html,
-                      "Ô tìm kiếm phải kích hoạt filterApps() theo thời gian thực khi gõ")
-        self.assertIn('id="btnClearSearch"', child_html, "Phải có nút xóa tìm kiếm nhanh")
-        
-        # 2. Kiểm tra mã JS xử lý lọc ứng dụng cục bộ
-        child_js_path = SERVER_DIR / "static" / "js" / "child.js"
-        child_js = child_js_path.read_text(encoding="utf-8")
-        
-        self.assertIn("function filterApps()", child_js, "child.js phải định nghĩa function filterApps()")
-        self.assertIn("function clearSearchInput()", child_js, "child.js phải có function clearSearchInput()")
-        self.assertIn("function renderApps()", child_js, "child.js phải có function renderApps()")
-        self.assertIn("removeVietnameseTones", child_js, "Phải hỗ trợ tìm kiếm không dấu tiếng Việt mượt mà")
-
-    # =========================================================================
-    # CA 3: QUY TRÌNH MỞ WEB & KIỂM DUYỆT 2 BƯỚC CHUẨN ĐỒ ÁN (APP + DOMAIN)
-    # =========================================================================
-    def test_case_3_two_step_moderation_and_direct_url_loading(self):
-        """Kiểm tra quy trình kiểm duyệt 2 bước:
-        - Bước 1: Trích xuất tên miền (extractDomain)
-        - Bước 2: So khớp Policy tên miền (isDomainBlocked)
-          + Chặn web cấm, hiển thị thông báo nội bộ, bắn alert WebSocket
-          + Nạp trực tiếp URL thật vào iframe nội bộ (Google có igu=1, hết lỗi màn hình trắng)
-        """
-        child_js_path = SERVER_DIR / "static" / "js" / "child.js"
-        child_js = child_js_path.read_text(encoding="utf-8")
-        
-        # 1. App Google Tìm Kiếm cài sẵn trong danh mục với tham số igu=1
-        self.assertIn("google_search", child_js, "Kho APPS phải có biểu tượng Google Tìm Kiếm")
-        self.assertIn("https://www.google.com/search?safe=active&igu=1", child_js,
-                      "Google Tìm Kiếm phải dùng link trực tiếp có igu=1 để nhúng iframe không bị trắng màn hình")
-        
-        # 2. Bước 1: Trích xuất tên miền
-        self.assertIn("function extractDomain(", child_js, "Phải có hàm trích xuất tên miền extractDomain()")
-        
-        # 3. Bước 2: Kiểm tra Domain Blacklist
-        self.assertIn("function isDomainBlocked(", child_js, "Phải có hàm kiểm tra domain cấm isDomainBlocked()")
-        self.assertIn("triggerViolationAlert(", child_js, "Phải bắn sự kiện violation_alert qua WebSocket khi vi phạm")
-        self.assertIn("showViolationBlockModal(", child_js, "Phải hiển thị modal thông báo vi phạm nội bộ")
-        self.assertIn("Trang web / Ứng dụng này đã bị ba mẹ chặn truy cập!", child_js,
-                      "Phải có thông báo chặn chuẩn đồ án")
-        
-        # 4. Nạp URL trực tiếp (không đi qua proxy search gây trắng màn hình)
-        self.assertIn("frame.src = search.href", child_js, "Khi domain hợp lệ, phải nạp URL trực tiếp vào iframe")
+    def test_child_has_one_google_search_entry(self):
+        child_html = (SERVER_DIR / "templates" / "child_portal.html").read_text(encoding="utf-8")
+        self.assertEqual(child_html.count('id="searchAppInput"'), 1)
+        self.assertNotIn('id="appGrid"', child_html)
+        self.assertIn('id="btnClearSearch"', child_html)
+        self.assertIn('sandbox="allow-scripts allow-same-origin" inert', child_html)
 
     # =========================================================================
     # CA 4: NÚT ĐÓNG [✕] TRÊN CÁC MODAL & TÍNH TOÀN VẸN GIAO DIỆN

@@ -16,16 +16,8 @@ let isTimeExpired = false; // Trạng thái hết hạn sử dụng
 let timeExpiredNotified = false; // Đã gửi cảnh báo hết giờ tới phụ huynh chưa
 let currentPolicy = null;
 let ws = null;
-let currentCategory = 'all';
 const childChatMessageIds = new Set();
 let configuredParentPin = ""; // Bắt buộc lấy chính xác từ Server / Policy của Phụ huynh
-
-// Danh sách ứng dụng cài sẵn và phân loại (Đã loại bỏ hoàn toàn các ứng dụng lỗi Zing MP3, Duolingo)
-const APPS = [
-  { id: 'google_search', name: 'Google Tìm Kiếm', category: 'study', icon: '🔍',
-    desc: 'Tìm kiếm với SafeSearch', url: 'https://www.google.com/search?safe=active&igu=1',
-    type: 'web', allowed: true }
-];
 
 // Danh sách domain bị chặn mặc định (Mạng xã hội, video giải trí độc hại, web cờ bạc/đen, game cấm)
 const DEFAULT_BLOCKED_DOMAINS = [
@@ -107,7 +99,6 @@ function checkRestrictedKeyword(query) {
 
 // --- 2. KHỞI CHẠY KHI TẢI TRANG ---
 document.addEventListener('DOMContentLoaded', async () => {
-  renderApps();
   setupEventListeners();
   await checkInitializationStatus();
   await loadInitialPolicy();
@@ -252,15 +243,8 @@ function notifyParentTimeExpired() {
 
 // Vô hiệu hóa toàn bộ tương tác trên giao diện máy con khi bị khóa/hết giờ
 function disableAppInteractions() {
-  const grid = document.getElementById('appGrid');
   const search = document.getElementById('searchAppInput');
   const btnSearch = document.getElementById('btnSearchGoogle');
-  const pills = document.querySelectorAll('.folder-pill');
-  if (grid) {
-    grid.style.pointerEvents = 'none';
-    grid.style.opacity = '0.4';
-    grid.style.filter = 'grayscale(60%)';
-  }
   if (search) {
     search.style.pointerEvents = 'none';
     search.disabled = true;
@@ -271,23 +255,12 @@ function disableAppInteractions() {
     btnSearch.disabled = true;
     btnSearch.style.opacity = '0.5';
   }
-  pills.forEach(p => {
-    p.style.pointerEvents = 'none';
-    p.style.opacity = '0.5';
-  });
 }
 
 // Kích hoạt lại tương tác khi được mở khóa
 function enableAppInteractions() {
-  const grid = document.getElementById('appGrid');
   const search = document.getElementById('searchAppInput');
   const btnSearch = document.getElementById('btnSearchGoogle');
-  const pills = document.querySelectorAll('.folder-pill');
-  if (grid) {
-    grid.style.pointerEvents = 'auto';
-    grid.style.opacity = '1';
-    grid.style.filter = 'none';
-  }
   if (search) {
     search.style.pointerEvents = 'auto';
     search.disabled = false;
@@ -298,10 +271,6 @@ function enableAppInteractions() {
     btnSearch.disabled = false;
     btnSearch.style.opacity = '1';
   }
-  pills.forEach(p => {
-    p.style.pointerEvents = 'auto';
-    p.style.opacity = '1';
-  });
 }
 
 let displayedTimelineMinute;
@@ -391,206 +360,27 @@ function applyPolicy(policy) {
     configuredParentPin = String(policy.lock_pin).trim();
   }
 
-  APPS[0].allowed = !isDomainBlocked('www.google.com');
-  APPS[0].blockReason = APPS[0].allowed ? '' : 'Google đã bị phụ huynh chặn';
 
-  renderApps();
   displayedTimelineMinute = undefined;
   updateTimeDisplay();
 }
 
-// --- 5. RENDER DANH SÁCH ỨNG DỤNG & LỌC TÌM KIẾM CỤC BỘ ---
-function filterApps() {
-  renderApps();
-  const searchInput = document.getElementById('searchAppInput');
-  const clearBtn = document.getElementById('btnClearSearch');
-  if (clearBtn) {
-    if (searchInput && searchInput.value.trim()) {
-      clearBtn.classList.remove('hidden');
-    } else {
-      clearBtn.classList.add('hidden');
-    }
-  }
+// --- 5. Ô tìm kiếm Google ---
+function updateSearchControls() {
+  const input = document.getElementById('searchAppInput');
+  const clear = document.getElementById('btnClearSearch');
+  if (!input || !clear) return;
+  if (input.value.trim()) clear.classList.remove('hidden');
+  else clear.classList.add('hidden');
 }
 
 function clearSearchInput() {
-  const searchInput = document.getElementById('searchAppInput');
-  if (searchInput) {
-    searchInput.value = '';
-    searchInput.focus();
+  const input = document.getElementById('searchAppInput');
+  if (input) {
+    input.value = '';
+    input.focus();
   }
-  filterApps();
-}
-
-function renderApps() {
-  const grid = document.getElementById('appGrid');
-  if (!grid) return;
-
-  const rawKeyword = (document.getElementById('searchAppInput')?.value || '').trim().toLowerCase();
-  const noToneKeyword = removeVietnameseTones(rawKeyword);
-  grid.innerHTML = '';
-
-  const filtered = APPS.filter(app => {
-    const matchCategory = currentCategory === 'all' || app.category === currentCategory;
-    if (!matchCategory) return false;
-
-    if (!rawKeyword) return true;
-    const nameLower = app.name.toLowerCase();
-    const nameNoTone = removeVietnameseTones(nameLower);
-    const descLower = (app.desc || '').toLowerCase();
-    const descNoTone = removeVietnameseTones(descLower);
-
-    return nameLower.includes(rawKeyword) || 
-           nameNoTone.includes(noToneKeyword) ||
-           descLower.includes(rawKeyword) ||
-           descNoTone.includes(noToneKeyword);
-  });
-
-  if (filtered.length === 0) {
-    grid.innerHTML = `
-      <div style="grid-column: 1 / -1; text-align: center; padding: 40px; color: var(--text-muted);">
-        <p style="font-size: 2rem; margin-bottom: 8px;">🔍</p>
-        <p style="font-weight: 600;">Không tìm thấy ứng dụng phù hợp với từ khóa "${escapeHtml(rawKeyword)}"</p>
-        <p style="font-size: 0.85rem; margin-top: 4px;">Hãy thử tìm kiếm với tên khác hoặc chọn thư mục "Tất cả".</p>
-      </div>
-    `;
-    return;
-  }
-
-  filtered.forEach(app => {
-    const card = document.createElement('div');
-    card.className = `app-card ${app.allowed ? '' : 'disabled'}`;
-    card.setAttribute('data-id', app.id);
-    card.setAttribute('role', 'group');
-    card.setAttribute('aria-label', app.name);
-
-    const badgeHtml = app.allowed 
-      ? ''
-      : `<span class="badge-status badge-blocked">✕ Đang bị khóa</span>`;
-
-    card.innerHTML = `
-      <div>
-        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-          <div class="app-icon">${app.icon}</div>
-          ${badgeHtml}
-        </div>
-        <h3 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 6px; color: var(--text-main);">${app.name}</h3>
-        <p style="font-size: 0.85rem; color: var(--text-muted); line-height: 1.4;">${app.desc}</p>
-      </div>
-      <div style="margin-top: 16px; display: flex; justify-content: space-between; align-items: center;">
-        <span style="font-size: 0.75rem; color: #64748b; font-weight: 600;">${getCategoryName(app.category)}</span>
-        <button class="launch-btn" style="
-          padding: 6px 14px;
-          border-radius: 10px;
-          border: none;
-          background: ${app.allowed ? '#0f766e' : '#64748b'};
-          color: white;
-          font-size: 0.8rem;
-          font-weight: 700;
-          cursor: ${app.allowed ? 'pointer' : 'not-allowed'};
-          transition: all 0.2s;
-        ">
-          ${app.allowed ? 'Mở ứng dụng ↗' : 'Đã khóa 🔒'}
-        </button>
-      </div>
-    `;
-
-    const launchButton = card.querySelector('.launch-btn');
-    launchButton.setAttribute('aria-label', `${app.allowed ? 'Mở' : 'Xem giới hạn của'} ${app.name}`);
-    launchButton.addEventListener('click', event => event.stopPropagation());
-    launchButton.addEventListener('click', () => card.click());
-    card.addEventListener('click', () => {
-      // 1. Chặn toàn diện nếu đã hết thời gian sử dụng
-      if (isTimeExpired || remainingSeconds <= 0) {
-        showToast("⌛ Đã hết thời gian sử dụng! Toàn bộ ứng dụng đã bị khóa.");
-        return false;
-      }
-
-      // 2. Chặn nếu phiên đang bị phụ huynh tạm khóa
-      if (isLocked) {
-        showToast("⚠️ Phiên làm việc đang bị khóa, không thể mở ứng dụng.");
-        return false;
-      }
-
-      // BƯỚC 1: KIỂM TRA TÊN APP / DANH MỤC CỤC BỘ (Local App Verification)
-      if (!app.allowed) {
-        showViolationBlockModal(app.name, "app");
-        triggerViolationAlert(app.name, "app", "Ứng dụng cấm");
-        logAccess(app.name, "Ứng dụng", "blocked");
-        showToast("🛑 Nội dung hoặc tên miền này đã bị ba mẹ hạn chế truy cập!");
-        return false;
-      }
-
-      // Nếu là Desktop App -> Mở trong Mock App Modal nội bộ
-      if (app.type === 'desktop') {
-        logAccess(app.name, "Ứng dụng", "allowed");
-        openMockApp(app.name, app.icon);
-        return;
-      }
-
-      // BƯỚC 2: KIỂM TRA TÊN MIỀN (Domain Blacklist Checking)
-      const domain = extractDomain(app.url);
-      const kwCheck = checkRestrictedKeyword(domain);
-      if (kwCheck.isRestricted || isDomainBlocked(domain)) {
-        showViolationBlockModal(app.name || domain, "web");
-        triggerViolationAlert(app.name || domain, "web", "Tên miền cấm");
-        logAccess(app.name || domain, "Trang web", "blocked");
-        showToast("🛑 Nội dung hoặc tên miền này đã bị ba mẹ hạn chế truy cập!");
-        return false;
-      }
-
-      // Domain hợp lệ -> Mở trực tiếp trong In-App Safe Browser
-      logAccess(app.name || domain, "Trang web", "allowed");
-      openInAppBrowser(app.url, app.name);
-    });
-
-    grid.appendChild(card);
-  });
-}
-
-// Mô phỏng ứng dụng đơn giản (Mock App Modal - Không can thiệp hệ điều hành)
-function openMockApp(name, icon) {
-  if (isTimeExpired || remainingSeconds <= 0) {
-    showToast("⌛ Đã hết thời gian sử dụng! Toàn bộ ứng dụng đã bị khóa.");
-    return;
-  }
-  if (isLocked) {
-    showToast("⚠️ Phiên làm việc đang bị khóa, không thể mở ứng dụng.");
-    return;
-  }
-
-  const modal = document.getElementById('mockAppModal');
-  const hIcon = document.getElementById('mockAppHeaderIcon');
-  const hTitle = document.getElementById('mockAppHeaderTitle');
-  const cIcon = document.getElementById('mockAppCenterIcon');
-  const status = document.getElementById('mockAppStatusText');
-
-  if (hIcon) hIcon.innerText = icon || '📱';
-  if (hTitle) hTitle.innerText = name;
-  if (cIcon) cIcon.innerText = icon || '📱';
-  if (status) status.innerText = `Đang mở app ${name}...`;
-
-  if (modal) {
-    modal.classList.remove('hidden');
-    modal.classList.add('flex');
-  }
-}
-
-function closeMockAppModal() {
-  const modal = document.getElementById('mockAppModal');
-  if (modal) {
-    modal.classList.add('hidden');
-    modal.classList.remove('flex');
-  }
-}
-
-function getCategoryName(cat) {
-  switch (cat) {
-    case 'study': return '📚 Học tập';
-    case 'creative': return '🎨 Sáng tạo';
-    case 'entertainment': return '🎮 Giải trí';
-    default: return 'Ứng dụng';
-  }
+  updateSearchControls();
 }
 
 // --- 6. IN-APP SAFE BROWSER (KIỂM DUYỆT TÊN MIỀN & MỞ NỘI BỘ AN TOÀN) ---
@@ -655,39 +445,23 @@ function isDomainBlocked(domain) {
   return false;
 }
 
-/**
- * Quy trình mở Web & Kiểm duyệt 2 bước chuẩn đồ án:
- * - Bước 1: Trích xuất tên miền (extractDomain)
- * - Bước 2: So khớp Policy tên miền (isDomainBlocked)
- *   + Nếu vi phạm: Không mở iframe/modal, hiển thị thông báo: "Trang web / Ứng dụng này đã bị ba mẹ chặn truy cập!"
- *     hoặc "Nội dung tìm kiếm chứa từ khóa không phù hợp với quy định của phụ huynh!", bắn WebSocket violation_alert (query_filter/web).
- *   + Nếu hợp lệ: Nạp trực tiếp URL thật vào khung iframe nội bộ, thanh tiêu đề có tên trang và nút Đóng [✕].
- *   + Cấu hình Google SafeSearch tham chiếu: https://www.google.com/search?q=&safe=active&ssui=on&igu=1
- */
-function handleGoogleOrDomainSearch() {
-  if (isTimeExpired || remainingSeconds <= 0 || isLocked) {
-    showToast("⌛ Đã hết thời gian sử dụng hoặc máy đang khóa! Toàn bộ ứng dụng đã bị khóa.");
+function handleGoogleOrDomainSearch(query = null) {
+  if (waitingForSetup) return;
+  if (isTimeExpired || remainingSeconds <= 0) {
+    showToast("⌛ Đã hết thời gian sử dụng.");
     return;
   }
   if (isLocked) {
-    showToast("⚠️ Phiên làm việc đang bị khóa, không thể mở ứng dụng.");
+    showToast("⚠️ Phiên làm việc đang bị khóa.");
     return;
   }
 
-  const searchInput = document.getElementById('searchAppInput');
-  const rawQuery = (searchInput?.value || '').trim();
-  if (!rawQuery) {
-    filterApps();
-    return;
-  }
+  const input = document.getElementById('searchAppInput');
+  const rawQuery = (query ?? input?.value ?? '').trim();
+  if (!rawQuery) return;
 
-  // 1. KIỂM DUYỆT TỪ KHÓA TÌM KIẾM ĐẦU VÀO (KEYWORD MODERATION)
-  const kwCheck = checkRestrictedKeyword(rawQuery);
-  if (kwCheck.isRestricted) {
-    showViolationBlockModal(rawQuery, "keyword");
-    triggerViolationAlert(rawQuery, "keyword", "Từ khóa cấm");
-    logAccess(rawQuery, "Tìm kiếm", "blocked");
-    showToast("🛑 Nội dung hoặc tên miền này đã bị ba mẹ hạn chế truy cập!");
+  if (checkRestrictedKeyword(rawQuery).isRestricted) {
+    reportBlockedSearch(rawQuery, "keyword", "Từ khóa cấm");
     return;
   }
 
@@ -695,9 +469,7 @@ function handleGoogleOrDomainSearch() {
   if (looksLikeAddress) {
     const target = extractDomain(rawQuery.includes('://') ? rawQuery : "https://" + rawQuery);
     if (target !== 'google.com' && target !== 'www.google.com') {
-      showViolationBlockModal(target || rawQuery, "web");
-      triggerViolationAlert(target || rawQuery, "web", "Chỉ cho phép Google Tìm kiếm");
-      logAccess(target || rawQuery, "Trang web", "blocked");
+      reportBlockedSearch(target || rawQuery, "web", "Chỉ cho phép Google Tìm kiếm");
       return;
     }
   }
@@ -718,8 +490,7 @@ function openInAppBrowser(url, title) {
   }
   if (search.origin !== 'https://www.google.com' || search.pathname !== '/search' ||
       isDomainBlocked(search.hostname)) {
-    showViolationBlockModal(search.hostname, 'web');
-    triggerViolationAlert(search.hostname, 'web');
+    reportBlockedSearch(search.hostname, "web", "Tên miền cấm");
     return;
   }
 
@@ -793,41 +564,43 @@ function logAccess(targetName, targetType, status) {
   } catch (e) {}
 }
 
-// Bắn sự kiện cảnh báo vi phạm thời gian thực về Phụ huynh qua WebSocket
-function triggerViolationAlert(targetName, targetType, violationType = "Từ khóa / Tên miền cấm") {
-  const now = new Date();
-  const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')} ${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth()+1).padStart(2, '0')}/${now.getFullYear()}`;
+function reportBlockedSearch(targetName, targetType, reason) {
+  const subject = targetName.slice(0, 255);
+  const timestamp = new Date();
+  closeInAppBrowser();
+  showViolationBlockModal(subject, targetType);
+  showToast("🛑 Nội dung hoặc tên miền này đã bị ba mẹ hạn chế truy cập.");
+  logAccess(subject, targetType === 'keyword' ? 'Tìm kiếm' : 'Trang web', 'blocked');
 
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({
-      action: 'violation_alert',
-      target_name: targetName,
-      target_type: targetType || 'web',
-      violation_type: violationType,
-      timestamp: timeStr
-    }));
-  }
-
-  // Ghi nhận sự kiện vào database thông qua API
+  let sent = false;
   try {
-    let eventType = 'blocked_domain';
-    if (targetType === 'app') eventType = 'blocked_app';
-    else if (targetType === 'query_filter' || targetType === 'keyword') eventType = 'query_filter';
-
-    fetch('/events/', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ts: new Date().toISOString(),
-        device_id: 'CHILD-PC',
-        child_id: childId,
-        type: eventType,
-        subject: targetName,
-        duration_sec: 0,
-        policy_id: currentPolicy?.id || 1
-      })
-    }).catch(() => {});
-  } catch (e) {}
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        action: 'violation_alert',
+        target_name: subject,
+        target_type: targetType,
+        violation_type: reason,
+        timestamp: timestamp.toLocaleString('vi-VN'),
+      }));
+      sent = true;
+    }
+  } catch (_) {
+    // The connection can close between checking readyState and sending.
+  }
+  fetch('/events/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ts: timestamp.toISOString(),
+      device_id: 'CHILD-PC',
+      child_id: childId,
+      type: targetType === 'keyword' ? 'query_filter' : 'blocked_domain',
+      subject,
+      duration_sec: 0,
+      policy_id: currentPolicy?.id || 1,
+      notify_parent: !sent,
+    }),
+  }).catch(() => {});
 }
 
 // --- 7. CƠ CHẾ IN-PAGE LOCK OVERLAY (SỬA DỨT ĐIỂM FULLSCREEN BUG) ---
@@ -853,7 +626,6 @@ function showLockOverlay(reason = "Đã hết thời gian sử dụng hoặc ba 
 
   // Đóng toàn bộ các cửa sổ nội bộ và modal đang mở
   closeInAppBrowser();
-  closeMockAppModal();
   closeViolationBlockModal();
   closeRequestTimeModal();
 
@@ -1090,28 +862,20 @@ function connectWebSocket() {
 
 // --- 10. TIỆN ÍCH & EVENT LISTENERS ---
 function setupEventListeners() {
-  // Lắng nghe tìm kiếm ứng dụng cục bộ (Realtime client-side filter)
   const searchInput = document.getElementById('searchAppInput');
   if (searchInput) {
-    searchInput.addEventListener('input', () => {
-      filterApps();
-    });
-    searchInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
+    searchInput.addEventListener('input', updateSearchControls);
+    searchInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !event.isComposing) {
+        event.preventDefault();
         handleGoogleOrDomainSearch();
       }
     });
   }
-
-  // Lắng nghe nút chuyển thư mục category
-  document.querySelectorAll('.folder-pill').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      document.querySelectorAll('.folder-pill').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      currentCategory = btn.getAttribute('data-cat') || 'all';
-      renderApps();
-    });
+  window.ogkDesktop?.onSearchAttempt?.(query => {
+    if (searchInput) searchInput.value = query;
+    updateSearchControls();
+    handleGoogleOrDomainSearch(query);
   });
 
   // Nút mở khóa bằng PIN
@@ -1445,8 +1209,7 @@ window.addEventListener('keydown', (e) => {
     closeFloatingChat();
     closeInAppBrowser();
     closeRequestTimeModal();
-    closeMockAppModal();
-    closeViolationBlockModal();
+      closeViolationBlockModal();
     const consentModal = document.getElementById('screenConsentModal');
     if (consentModal && consentModal.style.display !== 'none' && !consentModal.classList.contains('hidden')) {
       respondScreenConsent(false);
@@ -1457,7 +1220,6 @@ window.addEventListener('keydown', (e) => {
 document.addEventListener('click', (e) => {
   if (e.target.id === 'inAppBrowserModal') closeInAppBrowser();
   if (e.target.id === 'requestTimeModal') closeRequestTimeModal();
-  if (e.target.id === 'mockAppModal') closeMockAppModal();
   if (e.target.id === 'violationBlockModal') closeViolationBlockModal();
   if (e.target.id === 'screenConsentModal') respondScreenConsent(false);
 });

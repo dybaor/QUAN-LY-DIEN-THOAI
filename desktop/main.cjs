@@ -12,6 +12,7 @@ const wsOrigin = origin.replace(/^http/, 'ws');
 const entry = origin + (childMode ? '/child' : '/');
 let mainWindow;
 let googleWindow;
+let approvedSearch;
 
 function configureGoogle() {
     const isolated = session.fromPartition('ogk-google');
@@ -22,6 +23,14 @@ function configureGoogle() {
         if (details.resourceType === 'mainFrame') {
             const allowed = googleNavigation(details.url);
             if (!allowed) return done({ cancel: true });
+            const query = allowed.searchParams.get('q') ?? '';
+            if (query !== approvedSearch) {
+                done({ cancel: true });
+                if (query && mainWindow && !mainWindow.isDestroyed()) {
+                    mainWindow.webContents.send('ogk:google-search-attempt', query);
+                }
+                return;
+            }
             return done(allowed.href === details.url ? {} : { redirectURL: allowed.href });
         }
         const url = new URL(details.url);
@@ -44,6 +53,7 @@ function openGoogle(query, isolated) {
         googleWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
         googleWindow.on('closed', () => { googleWindow = null; });
     }
+    approvedSearch = query;
     googleWindow.loadURL(googleSearch(query).href).catch(() => {});
 }
 

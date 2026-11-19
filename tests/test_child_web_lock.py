@@ -69,7 +69,7 @@ class TestChildWebLock(unittest.TestCase):
         # Kiểm tra các ID phần tử giao diện bắt buộc
         self.assertIn('id="lockOverlay"', html, "Phải có lớp phủ In-Page Lock #lockOverlay")
         self.assertIn('id="searchAppInput"', html, "Phải có ô tìm kiếm tương tác #searchAppInput")
-        self.assertIn('id="appGrid"', html, "Phải có lưới ứng dụng #appGrid")
+        self.assertNotIn('id="appGrid"', html)
         self.assertIn('id="remainingMinutes"', html, "Phải có hiển thị số phút còn lại #remainingMinutes")
         self.assertIn('id="timeProgressBar"', html, "Phải có thanh tiến trình #timeProgressBar")
         self.assertIn('id="inAppBrowserModal"', html, "Phải có modal Safe Browser nội bộ #inAppBrowserModal")

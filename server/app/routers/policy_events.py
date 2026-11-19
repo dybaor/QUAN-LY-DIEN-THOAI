@@ -77,6 +77,7 @@ class EventCreateSchema(BaseModel):
     subject: str
     duration_sec: int
     policy_id: Optional[int] = None
+    notify_parent: bool = False
 
 
 class MonitoringStartSchema(BaseModel):
@@ -585,7 +586,11 @@ async def deduct_child_time(req: DeductTimeSchema, db: Session = Depends(get_db)
 # 2. API TIẾP NHẬN SỰ KIỆN (EVENTS - 7 TRƯỜNG)
 # ==========================================
 @router.post("/events/", status_code=status.HTTP_201_CREATED)
-def receive_event_single(event_data: Union[EventCreateSchema, List[EventCreateSchema]], db: Session = Depends(get_db)):
+def receive_event_single(
+    event_data: Union[EventCreateSchema, List[EventCreateSchema]],
+    db: Session = Depends(get_db),
+    background_tasks: BackgroundTasks = None,
+):
     """Tiếp nhận một hoặc nhiều sự kiện từ Agent theo chuẩn 7 trường."""
     if isinstance(event_data, list):
         items = event_data
@@ -607,21 +612,15 @@ def receive_event_single(event_data: Union[EventCreateSchema, List[EventCreateSc
     db.add_all(new_events)
     db.commit()
 
-    # Bắn thông báo Toast thời gian thực lên Web UI (100% Zero-OS Popup)
-    import asyncio
-    for ev in items:
-        if ev.type in ("blocked_app", "blocked_domain", "blocked_keyword", "query_filter", "clock_tamper", "locked"):
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    loop.create_task(manager.broadcast({
-                        "cmd": "violation_toast",
-                        "type": ev.type,
-                        "subject": ev.subject,
-                        "message": f"Phát hiện chặn: {ev.subject} ({ev.type})"
-                    }))
-            except Exception:
-                pass
+    if background_tasks:
+        for ev in items:
+            if ev.notify_parent and ev.type in ("query_filter", "blocked_domain"):
+                background_tasks.add_task(manager.send_to_parents, {
+                    "cmd": "violation_alert",
+                    "child_id": ev.child_id,
+                    "target_name": ev.subject,
+                    "target_type": "keyword" if ev.type == "query_filter" else "web",
+                })
 
     return {"status": "success", "recorded_count": len(new_events)}
 
