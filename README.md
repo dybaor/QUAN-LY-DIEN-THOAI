@@ -72,8 +72,11 @@ demo/
 
 > `dist_package/` chứa bộ chạy Windows dựng sẵn. Mã nguồn mới nhất nằm trong `server/`, `agent/` và `dns_proxy/`; các file `.exe` trong gói là bản dựng hiện có và cần được build lại trên Windows sau khi cập nhật mã nguồn. Database và cache runtime không được đưa lên GitHub.
 
+### Khởi chạy server từ mã nguồn trên Windows
+Trong thư mục `server/`, nhấp đúp `Start_App.bat`. Launcher tự tạo môi trường `.venv`, cài thư viện còn thiếu, khởi chạy server, đợi server sẵn sàng rồi mở hai trang web. Cần cài Python 3.11+ trước. Đóng cửa sổ **OGK Server** để dừng.
+
 ### Khởi chạy nhanh trên macOS
-Trên macOS, chạy `./Start_App.command` từ thư mục dự án. Launcher tự tạo `.venv`, cài thư viện backend còn thiếu, khởi động server và mở trang phụ huynh cùng giao diện trẻ trên trình duyệt. Nhấn `Ctrl+C` trong Terminal để dừng.
+Trên macOS, chạy `Start_App.command` trong thư mục `server/`. Launcher tự tạo `.venv`, cài thư viện backend còn thiếu, khởi động server và mở trang phụ huynh cùng giao diện trẻ trên trình duyệt. Nhấn `Ctrl+C` trong Terminal để dừng.
 
 ### Cách 2: Khởi chạy từ Mã Nguồn Python
 Yêu cầu: Python 3.11+ trên Windows 10/11 x64.
