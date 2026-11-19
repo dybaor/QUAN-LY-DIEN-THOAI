@@ -1718,7 +1718,8 @@
                 if (res.ok) {
                     const data = await res.json();
                     currentMonitoringSessionId = data.session_id;
-                    loadMonitoringHistory();
+                    if (monitorState !== "live") await recordStopMonitoringSession();
+                    else loadMonitoringHistory();
                 }
             } catch (e) {}
         }
@@ -1802,6 +1803,7 @@
                     body: JSON.stringify({
                         device_id: 'auto',
                         action: 'lock_window',
+                        child_id: currentChildId,
                         reason: 'Phụ huynh ấn khóa cửa sổ từ Web Dashboard'
                     })
                 });
@@ -1824,6 +1826,7 @@
                     body: JSON.stringify({
                         device_id: 'auto',
                         action: 'unlock_window',
+                        child_id: currentChildId,
                         reason: 'Phụ huynh mở khóa cửa sổ từ Web Dashboard'
                     })
                 });
@@ -1866,14 +1869,14 @@
         // GIẢM BỚT THỜI GIAN (TRỪ GIỜ THỜI GIAN THỰC)
         // -------------------------------------------------------------
         async function deductTime(minutes) {
-            if (!confirm(`Xác nhận trừ bớt ${minutes} phút thời gian của bé?\nLệnh sẽ cập nhật hạn mức và gửi thông báo tức thì qua WebSocket.`)) return;
+            if (!confirm(`Xác nhận trừ bớt ${minutes} phút thời gian của bé?\nLệnh chỉ điều chỉnh số phút hôm nay và gửi thông báo tức thì qua WebSocket.`)) return;
 
             try {
                 const res = await fetch('/policy/deduct-time', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        child_id: 1,
+                        child_id: currentChildId,
                         deduct_min: parseInt(minutes),
                         reason: `Phụ huynh trừ bớt ${minutes} phút`
                     })
@@ -1882,13 +1885,13 @@
                 if (res.ok) {
                     const feedback = document.getElementById('deductFeedbackText');
                     if (feedback) {
-                        feedback.innerText = `✓ Đã trừ ${minutes}p thành công!`;
+                        feedback.innerText = `✓ Đã trừ ${data.deducted_minutes}p thành công!`;
                         setTimeout(() => { feedback.innerText = ''; }, 4000);
                     }
                     // Tải lại chính sách và số liệu
                     loadPolicy();
                     loadDashboardStats();
-                    showToast(`✓ Đã trừ bớt ${minutes} phút thành công! Hạn mức đã đồng bộ tức thì.`, "success");
+                    showToast(`✓ Đã trừ bớt ${data.deducted_minutes} phút thành công! Hạn mức đã đồng bộ tức thì.`, "success");
                 } else {
                     showToast("Lỗi trừ giờ: " + (data.detail || data.message), "error");
                 }
@@ -2040,8 +2043,11 @@
         // KHUNG CHIẾU MÀN HÌNH LỚN TRỰC TIẾP (LARGE LIVE SCREEN MONITOR)
         // -------------------------------------------------------------
         let isStreamingActive = false;
+        let monitorState = 'idle';
 
         function setMonitorState(state) {
+            const previousState = monitorState;
+            monitorState = state;
             document.getElementById("device").dataset.state = state;
             const idleEl = document.getElementById('screenStateIdle');
             const pendingEl = document.getElementById('screenStatePending');
@@ -2063,6 +2069,8 @@
             }
 
             if (state === 'idle') {
+                if (previousState === 'live') recordStopMonitoringSession();
+                closeMonitorFullscreen();
                 if (currentLiveBlobUrl && currentLiveBlobUrl.startsWith('blob:')) {
                     URL.revokeObjectURL(currentLiveBlobUrl);
                     currentLiveBlobUrl = null;
@@ -2101,9 +2109,7 @@
                 }
                 if (dotEl) dotEl.className = "w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse";
                 if (noteEl) noteEl.innerText = "";
-                recordStartMonitoringSession();
-            } else if (state === 'idle') {
-                recordStopMonitoringSession();
+                if (previousState !== 'live') recordStartMonitoringSession();
             }
         }
 
@@ -2153,7 +2159,6 @@
         function stopScreenMonitoring() {
             if (!isStreamingActive && monitorState === 'idle') return;
             isStreamingActive = false;
-            recordStopMonitoringSession();
             setMonitorState('idle');
             if (parentWs && parentWs.readyState === WebSocket.OPEN) {
                 parentWs.send(JSON.stringify({ action: 'stop_screen_share' }));
@@ -2283,7 +2288,7 @@
                             loadDashboardStats();
                             if (cmd === 'sync_policy') loadPolicy();
                         }
-                        else if (cmd === 'new_time_request') {
+                        else if (cmd === 'new_time_request' && data.child_id === currentChildId) {
                             showToast("🙋‍♂️ Bé vừa gửi yêu cầu xin thêm thời gian sử dụng!", "info");
                             loadRequests();
                         }
@@ -2351,6 +2356,8 @@
                 };
 
                 parentWs.onclose = () => {
+                    isStreamingActive = false;
+                    setMonitorState('idle');
                     setTimeout(initParentWebSocket, 3000);
                 };
             } catch (err) {
@@ -2921,7 +2928,7 @@
             // Định kỳ làm mới dữ liệu
             setInterval(checkOnlineDevices, 5000);
             setInterval(loadRequests, 10000);
-            setInterval(loadDashboardStats, 15000);
+            setInterval(loadDashboardStats, 5000);
             setInterval(loadViolations, 10000);
             setInterval(loadAccessHistory, 10000);
             setInterval(loadMonitoringHistory, 10000);

@@ -22,29 +22,9 @@ let configuredParentPin = ""; // Bắt buộc lấy chính xác từ Server / Po
 
 // Danh sách ứng dụng cài sẵn và phân loại (Đã loại bỏ hoàn toàn các ứng dụng lỗi Zing MP3, Duolingo)
 const APPS = [
-  // 💻 Ứng dụng Desktop máy tính (Khởi chạy qua backend API bảo mật)
-  { id: 'app_calc', name: 'Máy tính Casio', category: 'study', icon: '🔢', desc: 'Máy tính tính toán khoa học', type: 'desktop', desktopId: 'calc', allowed: true },
-  { id: 'app_notepad', name: 'Sổ tay Ghi chú', category: 'creative', icon: '📝', desc: 'Ghi chú và soạn văn bản nhanh', type: 'desktop', desktopId: 'notepad', allowed: true },
-  { id: 'app_paint', name: 'MS Paint Vẽ hình', category: 'creative', icon: '🎨', desc: 'Vẽ tranh đồ họa sáng tạo', type: 'desktop', desktopId: 'paint', allowed: true },
-  { id: 'app_wordpad', name: 'WordPad Soạn thảo', category: 'creative', icon: '📄', desc: 'Soạn thảo văn bản phong phú', type: 'desktop', desktopId: 'wordpad', allowed: true },
-
-  // 📚 Học tập (Web Apps)
-  { id: 'google_search', name: 'Google Tìm Kiếm', category: 'study', icon: '🔍', desc: 'Tìm kiếm học tập trực tuyến', url: 'https://www.google.com/webhp?igu=1', type: 'web', allowed: true },
-  { id: 'khan', name: 'Khan Academy', category: 'study', icon: '🎓', desc: 'Học Toán & Khoa học trực tuyến', url: 'https://vi.khanacademy.org', type: 'web', allowed: true },
-  { id: 'wiki', name: 'Wikipedia Tiếng Việt', category: 'study', icon: '📖', desc: 'Bách khoa toàn thư mở', url: 'https://vi.wikipedia.org', type: 'web', allowed: true },
-  { id: 'vioedu', name: 'Toán Lớp 5 & VioEdu', category: 'study', icon: '📐', desc: 'Luyện thi và giải toán tiểu học', url: 'https://vio.edu.vn', type: 'web', allowed: true },
-  { id: 'scratch', name: 'Scratch MIT', category: 'study', icon: '🐱', desc: 'Lập trình sáng tạo cho trẻ em', url: 'https://scratch.mit.edu', type: 'web', allowed: true },
-
-  // 🎨 Sáng tạo & Năng suất (Web Apps)
-  { id: 'web_paint', name: 'Vẽ Tranh Paint Online', category: 'creative', icon: '🖌️', desc: 'Sáng tạo tranh vẽ trực tuyến', url: 'https://paint.js.org', type: 'web', allowed: true },
-  { id: 'canva', name: 'Canva Học Sinh', category: 'creative', icon: '✨', desc: 'Thiết kế thiệp & sơ đồ tư duy', url: 'https://www.canva.com', type: 'web', allowed: true },
-  { id: 'gdocs', name: 'Google Docs Học Tập', category: 'creative', icon: '📝', desc: 'Soạn thảo bài văn & bài tập', url: 'https://docs.google.com', type: 'web', allowed: true },
-  { id: 'pomodoro', name: 'Đồng Hồ Tập Trung', category: 'creative', icon: '⏱️', desc: 'Phương pháp tập trung Pomodoro', url: 'https://pomofocus.io', type: 'web', allowed: true },
-
-  // 🎮 Giải trí (Có thể bị phụ huynh chặn hoặc giới hạn)
-  { id: 'chess', name: 'Cờ Vua Thiếu Nhi', category: 'entertainment', icon: '♟️', desc: 'Rèn luyện tư duy chiến thuật', url: 'https://www.chesskid.com', type: 'web', allowed: true },
-  { id: 'yt_kids', name: 'YouTube Kids', category: 'entertainment', icon: '▶️', desc: 'Xem video giải trí an toàn', url: 'https://www.youtube.com', type: 'web', allowed: false, blockReason: 'Đang trong khung giờ học tập' },
-  { id: 'roblox', name: 'Roblox Online', category: 'entertainment', icon: '🧱', desc: 'Trò chơi thế giới ảo', url: 'https://www.roblox.com', type: 'web', allowed: false, blockReason: 'Bị hạn chế theo danh sách cấm' }
+  { id: 'google_search', name: 'Google Tìm Kiếm', category: 'study', icon: '🔍',
+    desc: 'Tìm kiếm với SafeSearch', url: 'https://www.google.com/search?safe=active&igu=1',
+    type: 'web', allowed: true }
 ];
 
 // Danh sách domain bị chặn mặc định (Mạng xã hội, video giải trí độc hại, web cờ bạc/đen, game cấm)
@@ -214,13 +194,19 @@ async function syncUsage(record = true) {
   if (usageSyncPending) return;
   usageSyncPending = true;
   try {
-    const active = record && !waitingForSetup && !isLocked && !document.hidden;
+    const active = record && !waitingForSetup && !isLocked && (!document.hidden || window.ogkDesktop);
     const response = await fetch(`/web-usage/${childId}`, { method: active ? 'POST' : 'GET' });
     if (!response.ok) return;
     const usage = await response.json();
     remainingSeconds = usage.remaining_seconds;
     totalSeconds = usage.quota_minutes * 60;
     if (!waitingForSetup) {
+      if (usage.lock_reason && !manuallyLocked) {
+        manuallyLocked = true;
+        showLockOverlay(usage.lock_reason);
+      } else if (usage.lock_reason === null && manuallyLocked) {
+        hideLockOverlay();
+      }
       if (remainingSeconds === 0 && !isTimeExpired) {
         handleTimeExpired();
       } else if (remainingSeconds > 0 && isTimeExpired) {
@@ -405,18 +391,8 @@ function applyPolicy(policy) {
     configuredParentPin = String(policy.lock_pin).trim();
   }
 
-  // Cập nhật trạng thái cho phép của ứng dụng theo danh sách cấm
-  const blockedList = (policy.blocked_domains || '').toLowerCase().split(',').map(s => s.trim()).filter(Boolean);
-  APPS.forEach(app => {
-    try {
-      const urlHost = new URL(app.url).hostname.toLowerCase();
-      const isDomainBlocked = blockedList.some(b => urlHost.includes(b)) || DEFAULT_BLOCKED_DOMAINS.some(d => urlHost.includes(d) && !app.allowed);
-      if (isDomainBlocked) {
-        app.allowed = false;
-        app.blockReason = 'Ứng dụng/Tên miền bị phụ huynh tạm khóa';
-      }
-    } catch (e) {}
-  });
+  APPS[0].allowed = !isDomainBlocked('www.google.com');
+  APPS[0].blockReason = APPS[0].allowed ? '' : 'Google đã bị phụ huynh chặn';
 
   renderApps();
   displayedTimelineMinute = undefined;
@@ -715,70 +691,57 @@ function handleGoogleOrDomainSearch() {
     return;
   }
 
-  // 2. NẾU NGƯỜI DÙNG NHẬP URL HOẶC TÊN MIỀN
-  const hasProtocol = /^https?:\/\//i.test(rawQuery);
-  const domainPattern = /^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(\/.*)?$/;
-  if (!/\s/.test(rawQuery) && (hasProtocol || domainPattern.test(rawQuery))) {
-    const targetUrl = hasProtocol ? rawQuery : `https://${rawQuery}`;
-    const targetDomain = extractDomain(targetUrl);
-    const domainKwCheck = checkRestrictedKeyword(targetDomain);
-    if (domainKwCheck.isRestricted || isDomainBlocked(targetDomain)) {
-      showViolationBlockModal(targetDomain, "web");
-      triggerViolationAlert(targetDomain, "web", "Tên miền cấm");
-      logAccess(targetDomain, "Trang web", "blocked");
-      showToast("🛑 Nội dung hoặc tên miền này đã bị ba mẹ hạn chế truy cập!");
+  const looksLikeAddress = /^https?:|^[^\s/]+\.[a-z]{2,}(?:[/?#:]|$)/i.test(rawQuery);
+  if (looksLikeAddress) {
+    const target = extractDomain(rawQuery.includes('://') ? rawQuery : "https://" + rawQuery);
+    if (target !== 'google.com' && target !== 'www.google.com') {
+      showViolationBlockModal(target || rawQuery, "web");
+      triggerViolationAlert(target || rawQuery, "web", "Chỉ cho phép Google Tìm kiếm");
+      logAccess(target || rawQuery, "Trang web", "blocked");
       return;
     }
-    logAccess(targetDomain, "Trang web", "allowed");
-    openInAppBrowser(targetUrl, targetDomain);
-    return;
   }
 
-  // Mặc định lọc danh sách ứng dụng cục bộ
-  filterApps();
+  const google = new URL("https://www.google.com/search");
+  google.search = new URLSearchParams({q: rawQuery, safe: 'active', igu: '1', udm: '14'});
+  openInAppBrowser(google.href, "Google Tìm kiếm");
 }
 
 function openInAppBrowser(url, title) {
-  if (isTimeExpired || remainingSeconds <= 0 || isLocked) {
-    showToast("⌛ Đã hết thời gian sử dụng hoặc máy đang khóa! Toàn bộ ứng dụng đã bị khóa.");
+  if (waitingForSetup || isTimeExpired || remainingSeconds <= 0 || isLocked) return;
+
+  let search;
+  try {
+    search = new URL(url);
+  } catch (_) {
     return;
   }
-  if (isLocked) {
-    showToast("⚠️ Phiên làm việc đang bị khóa, không thể mở ứng dụng.");
-    return;
-  }
-
-  // BƯỚC 1: Trích xuất tên miền từ URL
-  const urlHost = extractDomain(url);
-
-  // BƯỚC 2: So khớp Policy (Kiểm tra Domain Blacklist)
-  if (isDomainBlocked(urlHost)) {
-    // Không mở iframe/modal, hiển thị thông báo nội bộ và báo cáo vi phạm realtime về Phụ huynh
-    showViolationBlockModal(title || urlHost, "web");
-    triggerViolationAlert(title || urlHost, "web");
-    showToast("🛑 Trang web / Ứng dụng này đã bị ba mẹ chặn truy cập!");
+  if (search.origin !== 'https://www.google.com' || search.pathname !== '/search' ||
+      isDomainBlocked(search.hostname)) {
+    showViolationBlockModal(search.hostname, 'web');
+    triggerViolationAlert(search.hostname, 'web');
     return;
   }
 
-  // Domain hợp lệ -> Nạp trực tiếp URL thật vào khung iframe nội bộ
+  search.searchParams.set('safe', 'active');
+  search.searchParams.set('udm', '14');
+  logAccess(search.searchParams.get('q') || title, 'Tìm kiếm', 'allowed');
+  if (window.ogkDesktop) {
+    window.ogkDesktop.searchGoogle(search.searchParams.get('q') || '');
+    return;
+  }
+
   const modal = document.getElementById('inAppBrowserModal');
   const frame = document.getElementById('internalBrowserFrame');
-  const urlDisplay = document.getElementById('browserUrlDisplay');
-  const titleDisplay = document.getElementById('browserTitleDisplay');
-
   if (!modal || !frame) return;
-
-  if (titleDisplay) titleDisplay.innerText = title || urlHost;
-  if (urlDisplay) urlDisplay.innerText = url;
-
-  frame.removeAttribute('srcdoc');
-  // Nạp trực tiếp URL thật vào khung iframe nội bộ (hết lỗi màn hình trắng proxy; /proxy/web?url= dự phòng)
-  frame.src = url;
-
+  document.getElementById('browserTitleDisplay').innerText = title;
+  document.getElementById('browserUrlDisplay').innerText = search.origin;
+  frame.src = search.href;
   modal.classList.add('active');
 }
 
 function closeInAppBrowser() {
+  window.ogkDesktop?.closeGoogle();
   const modal = document.getElementById('inAppBrowserModal');
   const frame = document.getElementById('internalBrowserFrame');
   if (modal) modal.classList.remove('active');
@@ -926,18 +889,11 @@ async function verifyParentPin() {
     return;
   }
 
-  // 1. Kiểm tra trực tiếp với PIN đã cấu hình từ Policy phụ huynh (nếu có và không rỗng)
-  if (configuredParentPin && pin === configuredParentPin) {
-    hideLockOverlay();
-    return;
-  }
-
-  // 2. Xác thực bảo mật từ Server API (so khớp chính xác 100% với database)
   try {
     const res = await fetch('/api/settings/verify-pin', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ child_id: childId, pin: pin })
+      body: JSON.stringify({ child_id: childId, pin: pin, unlock_window: true })
     });
     if (res.ok) {
       const data = await res.json();
@@ -1022,18 +978,21 @@ function connectWebSocket() {
 
         // 1. Lệnh KHÓA CỬA SỔ (< 1s)
         if (cmd === 'lock' || cmd === 'lock_window' || cmd === 'lock_now') {
+          if (data.child_id != null && data.child_id !== childId) return;
           manuallyLocked = true;
           showLockOverlay(reason);
         }
         // 2. Lệnh MỞ KHÓA CỬA SỔ
         else if (cmd === 'unlock' || cmd === 'unlock_window') {
+          if (data.child_id != null && data.child_id !== childId) return;
           hideLockOverlay();
         }
         // 3. Phụ huynh TRỪ GIỜ THỜI GIAN THỰC
         else if (cmd === 'time_deducted' || cmd === 'deduct_time') {
           if (data.child_id != null && data.child_id !== childId) return;
           syncUsage(false);
-          showToast(`⚡ Ba mẹ đã trừ bớt ${data.deduct_min || data.minutes || 15} phút (${reason})`);
+          const deducted = data.deduct_min ?? data.minutes;
+          if (deducted > 0) showToast(`⚡ Ba mẹ đã trừ bớt ${deducted} phút (${reason})`);
         }
         // 4. Phụ huynh DUYỆT THÊM GIỜ
         else if (cmd === 'extend_time') {
@@ -1110,6 +1069,7 @@ function connectWebSocket() {
     };
 
     ws.onclose = () => {
+      stopScreenShare();
       console.warn("[WS] Mất kết nối WebSocket, đang thử kết nối lại sau 3s...");
       const wsBadge = document.getElementById('wsStatusBadge');
       if (wsBadge) {
@@ -1296,7 +1256,7 @@ async function respondScreenConsent(approved) {
           // Xuất Binary Blob JPEG 0.5 và gửi thẳng qua WebSocket
           canvas.toBlob((blob) => {
             try {
-              if (blob && ws && ws.readyState === WebSocket.OPEN && ws.bufferedAmount === 0) {
+              if (isSharingScreenActive && blob && ws && ws.readyState === WebSocket.OPEN && ws.bufferedAmount === 0) {
                 ws.send(blob);
               }
             } catch (sendErr) {

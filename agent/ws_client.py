@@ -94,7 +94,7 @@ class AgentNetworkClient:
                 latest_ver = data.get("latest_version", ver)
                 if data.get("need_policy_update", False) or latest_ver > ver or not policy:
                     print(f"[SYNC] Phát hiện chính sách mới (v{latest_ver} > v{ver}), tiến hành đồng bộ...")
-                    self.sync_policy()
+                self.sync_policy()  # Daily adjustments can change without a policy version change.
                 self.flush_events()
                 return True
         except Exception:

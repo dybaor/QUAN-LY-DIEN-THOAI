@@ -41,6 +41,8 @@ if errorlevel 1 (
     echo Server da chay san.
 )
 
+if /i "%~1"=="--server-only" exit /b 0
+
 start "" "http://127.0.0.1:8000/"
 start "" "http://127.0.0.1:8000/child"
 echo Da mo Dashboard va trang Child tren trinh duyet.

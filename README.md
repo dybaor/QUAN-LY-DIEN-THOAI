@@ -72,6 +72,9 @@ demo/
 
 > `dist_package/` chứa bộ chạy Windows dựng sẵn. Mã nguồn mới nhất nằm trong `server/`, `agent/` và `dns_proxy/`; các file `.exe` trong gói là bản dựng hiện có và cần được build lại trên Windows sau khi cập nhật mã nguồn. Database và cache runtime không được đưa lên GitHub.
 
+### Ứng dụng riêng cho phụ huynh và trẻ
+Xem [cách tạo và chạy hai ứng dụng Windows](desktop/README.md).
+
 ### Khởi chạy server từ mã nguồn trên Windows
 Trong thư mục `server/`, nhấp đúp `Start_App.bat`. Launcher tự tạo môi trường `.venv`, cài thư viện còn thiếu, khởi chạy server, đợi server sẵn sàng rồi mở hai trang web. Cần cài Python 3.11+ trước. Đóng cửa sổ **OGK Server** để dừng.
 

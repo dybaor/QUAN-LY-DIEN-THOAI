@@ -9,7 +9,8 @@ from pydantic import BaseModel, Field, validator
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import DeviceEvent, Policy, Child, MonitoringSession, AccessHistoryLog, WebDailyUsage
+from ..daily_time import adjust_today, adjustment_minutes
+from ..models import DeviceEvent, Policy, Child, MonitoringSession, AccessHistoryLog, WebDailyUsage, DailyTimeAdjustment, ChildWindowLock
 from ..websocket_manager import manager
 
 router = APIRouter(tags=["Policies & Events"])
@@ -53,6 +54,7 @@ class SettingsUpdateSchema(BaseModel):
 
 
 class VerifyPinSchema(BaseModel):
+    unlock_window: bool = False
     child_id: Optional[int] = 1
     pin: Optional[str] = None
     password: Optional[str] = None
@@ -104,6 +106,9 @@ def get_child_policy(child_id: int, db: Session = Depends(get_db)):
         db.add(policy)
         db.commit()
         db.refresh(policy)
+    day = datetime.now().date()
+    policy.adjustment_date = day.isoformat()
+    policy.adjustment_minutes = adjustment_minutes(db, child_id, day)
     return policy
 
 
@@ -259,6 +264,7 @@ def reset_system_state(db: Session = Depends(get_db)):
         policy.lock_pin = None
         policy.lock_password_hash = None
         policy.version = 1
+    db.query(ChildWindowLock).filter_by(child_id=1).delete()
     child = db.query(Child).filter(Child.id == 1).first()
     if child:
         child.name = None
@@ -316,6 +322,10 @@ def verify_pin(req: VerifyPinSchema, db: Session = Depends(get_db)):
         is_valid = True
     elif saved_pin and input_hash == saved_pin:
         is_valid = True
+
+    if is_valid and req.unlock_window:
+        db.query(ChildWindowLock).filter_by(child_id=child_id).delete()
+        db.commit()
 
     if is_valid:
         # Bắn WebSocket init_completed cho tất cả cửa sổ trẻ em tự động mở
@@ -529,19 +539,11 @@ async def deduct_child_time(req: DeductTimeSchema, db: Session = Depends(get_db)
     """Trừ bớt thời gian giải trí thời gian thực từ phía Phụ huynh."""
     policy = db.query(Policy).filter(Policy.child_id == req.child_id).first()
     if not policy:
-        policy = Policy(child_id=req.child_id)
-        db.add(policy)
-
-    # Khấu trừ quota của ngày hiện tại
-    now_weekday = datetime.now().date().weekday()
-    if now_weekday < 5:
-        policy.daily_quota_weekday_min = max(0, policy.daily_quota_weekday_min - req.deduct_min)
-    else:
-        policy.daily_quota_weekend_min = max(0, policy.daily_quota_weekend_min - req.deduct_min)
-
-    policy.version += 1
-    policy.updated_at = datetime.utcnow()
-
+        raise HTTPException(status_code=404, detail="Không tìm thấy chính sách của trẻ")
+    remaining = time_snapshot(req.child_id, datetime.now().date(), db)["remaining_seconds"]
+    deducted = min(req.deduct_min, (remaining + 59) // 60)
+    if deducted:
+        adjust_today(db, req.child_id, -deducted)
     db.commit()
     db.refresh(policy)
 
@@ -549,20 +551,18 @@ async def deduct_child_time(req: DeductTimeSchema, db: Session = Depends(get_db)
     await manager.broadcast({
         "cmd": "time_deducted",
         "child_id": req.child_id,
-        "deduct_min": req.deduct_min,
+        "deduct_min": deducted,
         "reason": req.reason,
-        "new_weekday_quota": policy.daily_quota_weekday_min,
-        "new_weekend_quota": policy.daily_quota_weekend_min,
-        "version": policy.version
+        "adjustment_date": datetime.now().date().isoformat()
     })
 
     return {
         "status": "success",
-        "deducted_minutes": req.deduct_min,
+        "deducted_minutes": deducted,
         "daily_quota_weekday_min": policy.daily_quota_weekday_min,
         "daily_quota_weekend_min": policy.daily_quota_weekend_min,
         "policy_version": policy.version,
-        "message": f"Đã giảm {req.deduct_min} phút của trẻ thành công"
+        "message": f"Đã giảm {deducted} phút của trẻ thành công"
     }
 
 
@@ -677,6 +677,7 @@ def cleanup_old_events(db: Session = Depends(get_db)):
     cutoff_date = datetime.utcnow() - timedelta(days=90)
     deleted_rows = db.query(DeviceEvent).filter(DeviceEvent.ts < cutoff_date).delete()
     db.query(WebDailyUsage).filter(WebDailyUsage.day < (datetime.now().date() - timedelta(days=90))).delete()
+    db.query(DailyTimeAdjustment).filter(DailyTimeAdjustment.day < cutoff_date.date()).delete()
     db.commit()
     return {"status": "success", "deleted_records_count": deleted_rows}
 
@@ -686,6 +687,8 @@ def purge_child_data(child_id: int, db: Session = Depends(get_db)):
     """Quyền được quên (Right to be Forgotten): Xóa toàn bộ dữ liệu của một trẻ."""
     del_events = db.query(DeviceEvent).filter(DeviceEvent.child_id == child_id).delete()
     db.query(WebDailyUsage).filter(WebDailyUsage.child_id == child_id).delete()
+    db.query(DailyTimeAdjustment).filter(DailyTimeAdjustment.child_id == child_id).delete()
+    db.query(ChildWindowLock).filter_by(child_id=child_id).delete()
     del_policies = db.query(Policy).filter(Policy.child_id == child_id).delete()
     db.commit()
     return {
@@ -719,12 +722,18 @@ def time_snapshot(child_id: int, day: date, db: Session) -> dict:
     quota = 90
     if policy:
         quota = policy.daily_quota_weekend_min if day.weekday() >= 5 else policy.daily_quota_weekday_min
+    adjustment = adjustment_minutes(db, child_id, day)
+    effective_quota = max(0, quota + adjustment)
     used = daily_usage_seconds(child_id, day, db)
+    lock = db.get(ChildWindowLock, child_id)
     return {
+        "lock_reason": lock.reason if lock else None,
         "today_minutes": used // 60,
         "today_seconds": used,
-        "quota_minutes": quota,
-        "remaining_seconds": max(0, quota * 60 - used),
+        "quota_minutes": effective_quota,
+        "base_quota_minutes": quota,
+        "adjustment_minutes": adjustment,
+        "remaining_seconds": max(0, effective_quota * 60 - used),
     }
 
 
@@ -733,7 +742,8 @@ def track_web_usage(child_id: int, db: Session = Depends(get_db)):
     now = datetime.now()
     day = now.date()
     settings = get_auth_settings(child_id, db)
-    if settings["is_initialized"] and time_snapshot(child_id, day, db)["remaining_seconds"] > 0:
+    snapshot = time_snapshot(child_id, day, db)
+    if settings["is_initialized"] and not snapshot["lock_reason"] and snapshot["remaining_seconds"] > 0:
         sample = insert(WebDailyUsage).values(
             child_id=child_id, day=day, used_seconds=0, last_seen=now.timestamp(),
         )

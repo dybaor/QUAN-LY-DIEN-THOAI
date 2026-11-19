@@ -215,6 +215,8 @@ class ProcessBlocker:
         # 3. Kiểm tra Daily Quota
         today_usage = local_cache.get_today_usage_seconds()
         quota_min = policy.get("daily_quota_weekend_min", 120) if is_weekend else policy.get("daily_quota_weekday_min", 90)
+        if policy.get("adjustment_date") == now.date().isoformat():
+            quota_min = max(0, quota_min + (policy.get("adjustment_minutes") or 0))
         if today_usage >= quota_min * 60:
             self.lock_workstation(f"Đã sử dụng hết hạn mức {quota_min} phút của ngày hôm nay")
             return

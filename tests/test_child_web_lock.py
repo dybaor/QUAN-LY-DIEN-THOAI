@@ -9,6 +9,7 @@ Bộ kiểm thử tự động xác thực hệ thống Cửa sổ Trẻ em (Chi
 5. Luồng xin thêm giờ (Time Extension Request) hoạt động chính xác.
 """
 
+import asyncio
 import os
 import sys
 import unittest
@@ -122,7 +123,7 @@ class TestChildWebLock(unittest.TestCase):
                 requested_minutes=15,
                 reason="Bé An xin thêm 15 phút làm bài tập kiểm tra toán"
             )
-            res = create_time_request(req_data, db)
+            res = asyncio.run(create_time_request(req_data, db))
             self.assertEqual(res.get("status"), "success")
             req_id = res.get("request_id")
             self.assertIsNotNone(req_id)

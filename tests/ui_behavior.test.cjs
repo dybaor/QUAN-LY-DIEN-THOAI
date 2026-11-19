@@ -66,7 +66,7 @@ function runtime(script, html) {
         console: { log() {}, warn() {}, error: (...args) => errors.push(args) },
         setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {},
         Chart: class { destroy() {} },
-        URL, Blob, Date, Option: class {},
+        URL, URLSearchParams, Blob, Date, Option: class {},
         sessionStorage: { getItem: () => null, setItem() {} },
         fetch: async () => ({ ok: false, json: async () => ({}) }),
     });
@@ -332,12 +332,12 @@ test('monitor transitions preserve compact idle and expanded live state', () => 
     assert.equal(app.nodes.get('liveScreenImg').classList.contains('hidden'), true);
 });
 
-test('child filtering handles Vietnamese without accents and escapes unmatched text', () => {
+test('child catalogue only has Google and escapes unmatched text', () => {
     const app = runtime(childScript, childHtml);
-    app.nodes.get('searchAppInput').value = 'may tinh';
+    app.nodes.get('searchAppInput').value = 'tim kiem';
     app.run('renderApps()');
     assert.equal(app.nodes.get('appGrid').children.length, 1);
-    assert.equal(app.nodes.get('appGrid').children[0].attributes['data-id'], 'app_calc');
+    assert.equal(app.nodes.get('appGrid').children[0].attributes['data-id'], 'google_search');
     app.nodes.get('searchAppInput').value = '<img src=x onerror=alert(1)>';
     app.run('renderApps()');
     assert.doesNotMatch(app.nodes.get('appGrid').innerHTML, /<img/);
@@ -348,7 +348,7 @@ test('child launch button has an accessible label and respects locking', () => {
     const app = runtime(childScript, childHtml);
     app.run('renderApps(); isLocked = true;');
     const card = app.nodes.get('appGrid').children[0];
-    assert.match(card.launchButton.attributes['aria-label'], /Mở Máy tính Casio/);
+    assert.match(card.launchButton.attributes['aria-label'], /Mở Google Tìm Kiếm/);
     card.launchButton.click();
     assert.match(app.context.testToasts.at(-1)[0], /đang bị khóa/);
     app.run('isLocked = false; isTimeExpired = true;');
@@ -455,12 +455,35 @@ test('rejected requests refresh the request list', async () => {
     assert.equal(app.context.refreshCount, 1);
 });
 
-test('child category filtering returns the expected group', () => {
+test('child only opens filtered Google search and blocks external domains', () => {
     const app = runtime(childScript, childHtml);
-    app.run("currentCategory = 'entertainment'; renderApps();");
-    assert.equal(app.nodes.get('appGrid').children.length, 3);
-    assert.match(app.nodes.get('appGrid').children[1].innerHTML, /Đang bị khóa/);
-    assert.doesNotMatch(app.nodes.get('appGrid').children[0].innerHTML, /Cho phép mở/);
+    const searches = [];
+    app.context.window.ogkDesktop = { searchGoogle: q => searches.push(q), closeGoogle() {} };
+    const input = app.nodes.get('searchAppInput');
+    app.run('waitingForSetup = false;');
+    input.value = 'https://adult-content-sample.com';
+    app.run('handleGoogleOrDomainSearch()');
+    input.value = 'phim người lớn';
+    app.run('handleGoogleOrDomainSearch()');
+    assert.deepEqual(searches, []);
+    input.value = 'bài tập toán lớp 5';
+    app.run('handleGoogleOrDomainSearch()');
+    assert.deepEqual(searches, ['bài tập toán lớp 5']);
+});
+
+test('parent immediately refreshes new requests and stops monitoring on child signal', () => {
+    const app = parent();
+    const sockets = [];
+    app.context.WebSocket = class {
+        constructor() { sockets.push(this); }
+    };
+    app.context.refreshCount = 0;
+    app.run('loadRequests = () => refreshCount++; recordStartMonitoringSession = () => {}; recordStopMonitoringSession = () => {}; initParentWebSocket(); setMonitorState("live");');
+    sockets[0].onmessage({ data: '{"cmd":"new_time_request","child_id":1}' });
+    sockets[0].onmessage({ data: '{"cmd":"screen_share_stopped"}' });
+    assert.equal(app.context.refreshCount, 1);
+    assert.equal(app.nodes.get('device').dataset.state, 'idle');
+    assert.equal(app.errors.length, 0);
 });
 
 for (const role of ['child', 'parent']) {
@@ -476,9 +499,9 @@ for (const role of ['child', 'parent']) {
         const socket = sockets[0];
         const input = app.nodes.get(role === 'child' ? 'childChatInput' : 'parentChatInput');
         const list = app.nodes.get(role === 'child' ? 'childChatMessageList' : 'parentChatMessageList');
-        input.value = 'alo';
-        app.run(role === 'child' ? 'sendChildChatMessage()' : 'sendParentChatMessage()');
+        app.run(role === 'child' ? 'sendQuickChildMsg("alo")' : 'sendQuickParentMsg("alo")');
         assert.equal(socket.sent.length, 1);
+        assert.equal(socket.sent[0].text, 'alo');
         assert.equal(list.children.length, 1);
         const payload = { ...socket.sent[0], cmd: 'chat_message' };
         await socket.onmessage({ data: JSON.stringify(payload) });

@@ -81,6 +81,19 @@ class WebDailyUsage(Base):
     last_seen = Column(Float, nullable=False)
 
 
+class ChildWindowLock(Base):
+    __tablename__ = "child_window_locks"
+    child_id = Column(Integer, ForeignKey("children.id"), primary_key=True)
+    reason = Column(String(255), nullable=False)
+
+
+class DailyTimeAdjustment(Base):
+    __tablename__ = "daily_time_adjustments"
+    child_id = Column(Integer, ForeignKey("children.id"), primary_key=True)
+    day = Column(Date, primary_key=True)
+    minutes = Column(Integer, nullable=False)
+
+
 class TimeRequest(Base):
     __tablename__ = "time_requests"
     id = Column(Integer, primary_key=True, index=True)

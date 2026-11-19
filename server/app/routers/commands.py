@@ -4,9 +4,11 @@ from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Depends
 from pydantic import BaseModel, Field
+from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Session
-from ..database import get_db
-from ..models import Device, Policy
+from ..database import SessionLocal, get_db
+from ..daily_time import adjust_today
+from ..models import Device, Policy, ChildWindowLock
 from ..websocket_manager import manager
 
 router = APIRouter(tags=["Commands & WebSocket"])
@@ -36,6 +38,20 @@ class ConsentResponseModel(BaseModel):
     feature: str = "screen"
     approved: bool
     reason: Optional[str] = ""
+
+def save_window_lock(db: Session, child_id: int, reason: Optional[str]):
+    if reason is None:
+        db.query(ChildWindowLock).filter_by(child_id=child_id).delete()
+    else:
+        lock = insert(ChildWindowLock).values(
+            child_id=child_id, reason=reason.strip()[:255] or "Lệnh từ phụ huynh",
+        )
+        db.execute(lock.on_conflict_do_update(
+            index_elements=[ChildWindowLock.child_id],
+            set_={"reason": lock.excluded.reason},
+        ))
+    db.commit()
+
 
 # --- 1. Endpoint Heartbeat từ Agent gửi lên ---
 @router.post("/heartbeat")
@@ -136,14 +152,18 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
                         await manager.send_to_children({
                             "cmd": "stop_screen_share"
                         })
-                    elif action in ("lock", "lock_now", "lock_window"):
+                    elif action in ("lock", "lock_now", "lock_window", "unlock", "unlock_window"):
+                        if not device_id.startswith("parent_"):
+                            continue
+                        child_id = int(obj.get("child_id", 1))
+                        unlock = action in ("unlock", "unlock_window")
+                        reason = None if unlock else str(obj.get("reason") or "Lệnh từ phụ huynh")
+                        with SessionLocal() as db:
+                            save_window_lock(db, child_id, reason)
                         await manager.send_to_children({
-                            "cmd": "lock_window",
-                            "reason": obj.get("reason", "Lệnh từ phụ huynh")
-                        })
-                    elif action in ("unlock", "unlock_window"):
-                        await manager.send_to_children({
-                            "cmd": "unlock_window"
+                            "cmd": "unlock_window" if unlock else "lock_window",
+                            "child_id": child_id,
+                            "reason": reason,
                         })
                     elif obj.get("type") == "consent_response":
                         approved = obj.get("approved", False)
@@ -165,6 +185,7 @@ async def child_websocket_endpoint(websocket: WebSocket, guid: str):
     """Endpoint WebSocket chuyên biệt phục vụ Cửa sổ Trẻ em (Child Web Portal)."""
     device_key = f"child_{guid}"
     await manager.connect(device_key, websocket)
+    sharing = False
     try:
         while True:
             message = await websocket.receive()
@@ -173,6 +194,7 @@ async def child_websocket_endpoint(websocket: WebSocket, guid: str):
 
             # 1. Nhận dữ liệu nhị phân (Binary Frame 15-30 FPS) -> Chuyển thẳng tới Phụ huynh ngay lập tức
             if "bytes" in message and message["bytes"]:
+                sharing = True
                 await manager.send_bytes_to_parents(message["bytes"])
                 continue
 
@@ -185,6 +207,7 @@ async def child_websocket_endpoint(websocket: WebSocket, guid: str):
                     # 1. Phản hồi đồng thuận xem màn hình -> Gửi riêng cho Phụ huynh
                     if msg_type == "consent_response":
                         approved = obj.get("approved", False)
+                        sharing = bool(approved)
                         latest_consent_status["status"] = "accepted" if approved else "declined"
                         latest_consent_status["timestamp"] = datetime.utcnow().isoformat()
                         latest_consent_status["message"] = "Bé đã ĐỒNG Ý chia sẻ màn hình" if approved else "Bé đã TỪ CHỐI chia sẻ màn hình"
@@ -195,12 +218,15 @@ async def child_websocket_endpoint(websocket: WebSocket, guid: str):
                         })
                     # 2. Truyền khung hình màn hình dạng Base64 (fallback) -> Gửi riêng cho Phụ huynh
                     elif msg_type == "screen_frame":
+                        sharing = True
                         await manager.send_to_parents({
                             "cmd": "live_screen_frame",
                             "frame": obj.get("data")
                         })
                     # 3. Bé dừng chia sẻ màn hình -> Gửi riêng cho Phụ huynh
                     elif msg_type == "stop_screen_share":
+                        sharing = False
+                        latest_consent_status["status"] = "idle"
                         await manager.send_to_parents({
                             "cmd": "screen_share_stopped"
                         })
@@ -240,7 +266,12 @@ async def child_websocket_endpoint(websocket: WebSocket, guid: str):
                 except Exception:
                     pass
     except WebSocketDisconnect:
+        pass
+    finally:
         manager.disconnect(device_key, websocket)
+        if sharing:
+            latest_consent_status["status"] = "idle"
+            await manager.send_to_parents({"cmd": "screen_share_stopped"})
 
 # --- 3. Endpoint lấy danh sách thiết bị đang online qua WebSocket ---
 @router.get("/devices/online")
@@ -260,6 +291,11 @@ async def send_emergency_command(req: CommandRequest, db: Session = Depends(get_
         "timeout_sec": 10 if req.action == "shutdown_now" else 30
     }
 
+    if req.action in ("lock", "lock_now", "lock_window", "unlock", "unlock_window"):
+        reason = req.reason if req.action in ("lock", "lock_now", "lock_window") else None
+        save_window_lock(db, req.child_id, reason)
+        payload.update(child_id=req.child_id)
+
     if req.action == "extend_time":
         minutes = req.duration_min or 0
         if not 5 <= minutes <= 180:
@@ -267,12 +303,9 @@ async def send_emergency_command(req: CommandRequest, db: Session = Depends(get_
         policy = db.query(Policy).filter(Policy.child_id == req.child_id).first()
         if not policy:
             raise HTTPException(status_code=404, detail="Không tìm thấy chính sách của trẻ")
-        policy.daily_quota_weekday_min += minutes
-        policy.daily_quota_weekend_min += minutes
-        policy.version += 1
-        policy.updated_at = datetime.utcnow()
+        adjust_today(db, req.child_id, minutes)
         db.commit()
-        payload.update(child_id=req.child_id, granted_minutes=minutes, policy_version=policy.version)
+        payload.update(child_id=req.child_id, granted_minutes=minutes)
 
     if req.action == "request_screen_consent":
         latest_consent_status["status"] = "pending"

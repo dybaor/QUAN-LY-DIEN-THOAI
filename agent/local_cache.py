@@ -101,6 +101,13 @@ class LocalCache:
                         );
                         """
                     )
+                    cursor.execute("""
+                        CREATE TABLE IF NOT EXISTS cached_time_adjustment (
+                            child_id INTEGER PRIMARY KEY,
+                            day TEXT,
+                            minutes INTEGER NOT NULL
+                        )
+                    """)
                     # 2. Hàng đợi sự kiện (Event Queue - 7 trường chuẩn)
                     cursor.execute(
                         """
@@ -171,6 +178,13 @@ class LocalCache:
                             updated_at,
                         ),
                     )
+                    conn.execute(
+                        """INSERT INTO cached_time_adjustment (child_id, day, minutes)
+                           VALUES (?, ?, ?)
+                           ON CONFLICT(child_id) DO UPDATE SET
+                           day=excluded.day, minutes=excluded.minutes""",
+                        (child_id, policy.get("adjustment_date"), policy.get("adjustment_minutes", 0)),
+                    )
                     conn.commit()
                 return True
             except Exception as exc:
@@ -184,7 +198,9 @@ class LocalCache:
             try:
                 with self._get_connection() as conn:
                     cursor = conn.cursor()
-                    cursor.execute("SELECT * FROM cached_policy WHERE child_id = ?;", (c_id,))
+                    cursor.execute("""SELECT p.*, a.day AS adjustment_date, a.minutes AS adjustment_minutes
+                        FROM cached_policy p LEFT JOIN cached_time_adjustment a USING (child_id)
+                        WHERE p.child_id = ?;""", (c_id,))
                     row = cursor.fetchone()
                     if row:
                         return dict(row)

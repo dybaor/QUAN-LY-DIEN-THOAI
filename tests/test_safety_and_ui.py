@@ -60,8 +60,8 @@ class TestSafetyAndUI(unittest.TestCase):
         child_html = child_html_path.read_text(encoding="utf-8")
         
         # 1. Kiểm tra placeholder và sự kiện oninput
-        self.assertIn('placeholder="Tìm ứng dụng hoặc trang web…"', child_html)
-        self.assertIn('aria-label="Tìm ứng dụng hoặc trang web"', child_html)
+        self.assertIn('placeholder="Tìm kiếm trên Google…"', child_html)
+        self.assertIn('aria-label="Tìm kiếm trên Google"', child_html)
         self.assertIn('oninput="filterApps()"', child_html,
                       "Ô tìm kiếm phải kích hoạt filterApps() theo thời gian thực khi gõ")
         self.assertIn('id="btnClearSearch"', child_html, "Phải có nút xóa tìm kiếm nhanh")
@@ -90,7 +90,7 @@ class TestSafetyAndUI(unittest.TestCase):
         
         # 1. App Google Tìm Kiếm cài sẵn trong danh mục với tham số igu=1
         self.assertIn("google_search", child_js, "Kho APPS phải có biểu tượng Google Tìm Kiếm")
-        self.assertIn("https://www.google.com/webhp?igu=1", child_js,
+        self.assertIn("https://www.google.com/search?safe=active&igu=1", child_js,
                       "Google Tìm Kiếm phải dùng link trực tiếp có igu=1 để nhúng iframe không bị trắng màn hình")
         
         # 2. Bước 1: Trích xuất tên miền
@@ -104,7 +104,7 @@ class TestSafetyAndUI(unittest.TestCase):
                       "Phải có thông báo chặn chuẩn đồ án")
         
         # 4. Nạp URL trực tiếp (không đi qua proxy search gây trắng màn hình)
-        self.assertIn("frame.src = url", child_js, "Khi domain hợp lệ, phải nạp URL trực tiếp vào iframe")
+        self.assertIn("frame.src = search.href", child_js, "Khi domain hợp lệ, phải nạp URL trực tiếp vào iframe")
 
     # =========================================================================
     # CA 4: NÚT ĐÓNG [✕] TRÊN CÁC MODAL & TÍNH TOÀN VẸN GIAO DIỆN

@@ -5,7 +5,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import TimeRequest, Policy, Child
+from ..daily_time import adjust_today
+from ..models import TimeRequest, Child
 from ..websocket_manager import manager
 
 router = APIRouter(prefix="/requests", tags=["Time Extension Requests"])
@@ -59,7 +60,7 @@ def get_child_requests(child_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/")
-def create_time_request(req: CreateTimeRequestSchema, db: Session = Depends(get_db)):
+async def create_time_request(req: CreateTimeRequestSchema, db: Session = Depends(get_db)):
     """Trẻ gửi yêu cầu xin thêm giờ từ máy con."""
     new_req = TimeRequest(
         child_id=req.child_id,
@@ -72,6 +73,11 @@ def create_time_request(req: CreateTimeRequestSchema, db: Session = Depends(get_
     db.add(new_req)
     db.commit()
     db.refresh(new_req)
+    await manager.send_to_parents({
+        "cmd": "new_time_request",
+        "child_id": new_req.child_id,
+        "request_id": new_req.id,
+    })
     return {"status": "success", "request_id": new_req.id, "message": "Yêu cầu đã được gửi tới phụ huynh"}
 
 
@@ -93,25 +99,14 @@ async def approve_time_request(
     req.granted_minutes = granted
     req.resolved_at = datetime.datetime.utcnow()
 
-    # Tự động cộng thêm quota vào Policy của trẻ
-    policy = db.query(Policy).filter(Policy.child_id == req.child_id).first()
-    if policy:
-        policy.daily_quota_weekday_min += granted
-        policy.daily_quota_weekend_min += granted
-        policy.version += 1
-        policy.updated_at = datetime.datetime.utcnow()
-        db.commit()
-
-        # Báo cho Agent qua WebSocket nếu đang online
-        await manager.broadcast({
-            "cmd": "extend_time",
-            "child_id": req.child_id,
-            "granted_minutes": granted,
-            "reason": f"Phụ huynh duyệt thêm {granted} phút",
-            "policy_version": policy.version
-        })
-    else:
-        db.commit()
+    adjust_today(db, req.child_id, granted)
+    db.commit()
+    await manager.broadcast({
+        "cmd": "extend_time",
+        "child_id": req.child_id,
+        "granted_minutes": granted,
+        "reason": f"Phụ huynh duyệt thêm {granted} phút",
+    })
 
     return {
         "status": "success",

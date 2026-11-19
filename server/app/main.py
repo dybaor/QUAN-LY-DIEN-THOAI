@@ -189,61 +189,8 @@ def check_restricted_keyword_py(query: str) -> tuple[bool, str]:
 
 @app.get("/proxy/web")
 def proxy_web(url: str):
-    """Proxy nội bộ nạp trang web vào iframe bằng cách gỡ X-Frame-Options & Content-Security-Policy"""
-    try:
-        parsed = urllib.parse.urlparse(url)
-        if parsed.scheme not in ("http", "https"):
-            return Response(content="<p>Địa chỉ web không hợp lệ.</p>", media_type="text/html", status_code=400)
-        
-        req = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-            }
-        )
-        with urllib.request.urlopen(req, timeout=6) as resp:
-            content = resp.read()
-            content_type = resp.headers.get("Content-Type", "text/html; charset=utf-8")
-            
-            # Gỡ bỏ các thẻ meta X-Frame-Options hoặc CSP frame-ancestors nếu có trong HTML
-            if "text/html" in content_type.lower():
-                try:
-                    text = content.decode("utf-8", errors="replace")
-                    # Chèn base href để các link tương đối hoạt động
-                    base_tag = f'<base href="{url}">'
-                    if "<head>" in text.lower():
-                        text = text.replace("<head>", f"<head>{base_tag}", 1).replace("<HEAD>", f"<HEAD>{base_tag}", 1)
-                    content = text.encode("utf-8")
-                except Exception:
-                    pass
+    return Response(status_code=403, content="Trang trẻ chỉ hỗ trợ Google Tìm kiếm.")
 
-            response = Response(content=content, media_type=content_type)
-            response.headers["Access-Control-Allow-Origin"] = "*"
-            # Đảm bảo xóa hoặc không gán x-frame-options
-            return response
-    except Exception as e:
-        error_html = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <style>
-                body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; text-align: center; padding: 20px; }}
-                .box {{ max-width: 480px; background: #1e293b; padding: 32px; border-radius: 20px; border: 1px solid #334155; box-shadow: 0 10px 25px rgba(0,0,0,0.4); }}
-                .btn {{ display: inline-block; margin-top: 16px; padding: 10px 20px; background: linear-gradient(135deg, #06b6d4, #0d9488); color: white; text-decoration: none; border-radius: 12px; font-weight: bold; font-size: 14px; }}
-            </style>
-        </head>
-        <body>
-            <div class="box">
-                <div style="font-size: 40px; margin-bottom: 12px;">🌐</div>
-                <h3 style="margin: 0 0 8px 0; font-size: 18px; color: #38bdf8;">Không thể hiển thị nội dung trang này</h3>
-                <p style="color: #94a3b8; font-size: 13px; line-height: 1.5; margin: 0;">Trang web này từ chối kết nối hoặc không cho phép nhúng trực tiếp. Bé vui lòng chọn ứng dụng học tập khác nhé!</p>
-                <button class="btn" onclick="if (window.parent && window.parent.closeInAppBrowser) window.parent.closeInAppBrowser();">Đóng cửa sổ ✕</button>
-            </div>
-        </body>
-        </html>
-        """
-        return Response(content=error_html, media_type="text/html", status_code=200)
 
 @app.get("/health")
 def health_check():
