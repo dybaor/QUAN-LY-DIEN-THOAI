@@ -8,6 +8,7 @@ import json
 import os
 import socket
 import socketserver
+import sys
 import threading
 from typing import Set
 from dnslib import A, QTYPE, RCODE, RR, DNSRecord

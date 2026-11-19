@@ -3,7 +3,7 @@ from uuid import uuid4
 from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import Device, Policy
@@ -23,6 +23,7 @@ latest_consent_status = {
 class CommandRequest(BaseModel):
     device_id: str
     action: str  # "lock_now", "shutdown_now", "cancel_shutdown", "request_screen_consent", "unlock", "extend_time"
+    child_id: int = Field(default=1, ge=1)
     duration_min: Optional[int] = 0
     reason: str = "Lệnh từ phụ huynh"
 
@@ -249,7 +250,7 @@ def get_online_devices():
 
 # --- 4. Endpoint gửi lệnh khẩn cấp thống nhất định dạng ---
 @router.post("/commands/send")
-async def send_emergency_command(req: CommandRequest):
+async def send_emergency_command(req: CommandRequest, db: Session = Depends(get_db)):
     # Chuẩn hóa format đúng chuẩn {"cmd": ..., "id": ...} mà nhóm yêu cầu
     payload = {
         "cmd": req.action,
@@ -258,6 +259,20 @@ async def send_emergency_command(req: CommandRequest):
         "duration_min": req.duration_min,
         "timeout_sec": 10 if req.action == "shutdown_now" else 30
     }
+
+    if req.action == "extend_time":
+        minutes = req.duration_min or 0
+        if not 5 <= minutes <= 180:
+            raise HTTPException(status_code=422, detail="Thời gian gia hạn phải từ 5 đến 180 phút")
+        policy = db.query(Policy).filter(Policy.child_id == req.child_id).first()
+        if not policy:
+            raise HTTPException(status_code=404, detail="Không tìm thấy chính sách của trẻ")
+        policy.daily_quota_weekday_min += minutes
+        policy.daily_quota_weekend_min += minutes
+        policy.version += 1
+        policy.updated_at = datetime.utcnow()
+        db.commit()
+        payload.update(child_id=req.child_id, granted_minutes=minutes, policy_version=policy.version)
 
     if req.action == "request_screen_consent":
         latest_consent_status["status"] = "pending"

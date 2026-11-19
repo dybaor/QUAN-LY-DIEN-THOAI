@@ -5,7 +5,10 @@
  */
 
 // --- 1. BIẾN TRẠNG THÁI TOÀN CỤC ---
-let childId = 1;
+let childId = Number(window.location.pathname?.match(/^\/child\/(\d+)\/?$/)?.[1]) || 1;
+let waitingForSetup = true;
+let manuallyLocked = false;
+let usageSyncPending = false;
 let remainingSeconds = 120 * 60; // Mặc định 120 phút
 let totalSeconds = 120 * 60;
 let isLocked = false;
@@ -130,6 +133,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadInitialPolicy();
   connectWebSocket();
   startClockTicker();
+  syncUsage();
+  setInterval(() => syncUsage(), 5000);
 });
 
 // Kiểm tra trạng thái khởi tạo từ phụ huynh (Waiting State)
@@ -160,6 +165,7 @@ async function checkInitializationStatus() {
 }
 
 function hideWaitingScreen() {
+  waitingForSetup = false;
   const waitingEl = document.getElementById('waitingScreenState');
   if (waitingEl) {
     waitingEl.style.opacity = '0';
@@ -171,6 +177,7 @@ function hideWaitingScreen() {
 }
 
 function showWaitingScreen() {
+  waitingForSetup = true;
   const waitingEl = document.getElementById('waitingScreenState');
   if (waitingEl) {
     waitingEl.style.display = 'flex';
@@ -199,19 +206,35 @@ function startClockTicker() {
       lockClockEl.innerText = timeFormatted;
     }
 
-    // 2. Trừ thời gian sử dụng nếu không bị khóa và chưa hết thời gian
-    if (!isLocked && remainingSeconds > 0) {
-      remainingSeconds--;
-
-      // Tự động kích hoạt In-Page Lock và khóa hoàn toàn tương tác khi hết thời gian
-      if (remainingSeconds <= 0) {
-        handleTimeExpired();
-      }
-    } else if (remainingSeconds <= 0 && !isTimeExpired) {
-      handleTimeExpired();
-    }
     updateTimeDisplay();
   }, 1000);
+}
+
+async function syncUsage(record = true) {
+  if (usageSyncPending) return;
+  usageSyncPending = true;
+  try {
+    const active = record && !waitingForSetup && !isLocked && !document.hidden;
+    const response = await fetch(`/web-usage/${childId}`, { method: active ? 'POST' : 'GET' });
+    if (!response.ok) return;
+    const usage = await response.json();
+    remainingSeconds = usage.remaining_seconds;
+    totalSeconds = usage.quota_minutes * 60;
+    if (!waitingForSetup) {
+      if (remainingSeconds === 0 && !isTimeExpired) {
+        handleTimeExpired();
+      } else if (remainingSeconds > 0 && isTimeExpired) {
+        isTimeExpired = false;
+        timeExpiredNotified = false;
+        if (!manuallyLocked) hideLockOverlay();
+      }
+    }
+    updateTimeDisplay();
+  } catch (err) {
+    console.warn("Không thể đồng bộ thời gian:", err);
+  } finally {
+    usageSyncPending = false;
+  }
 }
 
 // Xử lý khi hết giờ sử dụng trong ngày (Khóa tuyệt đối, đóng toàn bộ app và báo cho phụ huynh)
@@ -303,7 +326,7 @@ function updateTimeDisplay() {
     displayedTimelineMinute = minute;
     OgkTimeline.render("todayTimeline", currentPolicy?.schedule_matrix);
   }
-  const remMinutes = Math.floor(remainingSeconds / 60);
+  const remMinutes = Math.ceil(remainingSeconds / 60);
   const totMinutes = Math.floor(totalSeconds / 60);
   const percent = totalSeconds > 0 ? Math.min(100, Math.max(0, (remainingSeconds / totalSeconds) * 100)) : 0;
 
@@ -357,11 +380,6 @@ function applyPolicy(policy) {
 
   const now = new Date();
   const isWeekend = now.getDay() === 0 || now.getDay() === 6;
-  const quotaMin = isWeekend ? (policy.daily_quota_weekend_min ?? 180) : (policy.daily_quota_weekday_min ?? 120);
-
-  const nextTotal = quotaMin * 60;
-  remainingSeconds = Math.max(0, Math.min(nextTotal, remainingSeconds + nextTotal - totalSeconds));
-  totalSeconds = nextTotal;
 
   // Cập nhật chế độ hiển thị
   const modeBadge = document.getElementById('modeBadge');
@@ -880,6 +898,11 @@ function showLockOverlay(reason = "Đã hết thời gian sử dụng hoặc ba 
 }
 
 function hideLockOverlay() {
+  manuallyLocked = false;
+  if (remainingSeconds <= 0) {
+    if (!isTimeExpired) handleTimeExpired();
+    return;
+  }
   isLocked = false;
   if (remainingSeconds > 0) {
     isTimeExpired = false;
@@ -999,6 +1022,7 @@ function connectWebSocket() {
 
         // 1. Lệnh KHÓA CỬA SỔ (< 1s)
         if (cmd === 'lock' || cmd === 'lock_window' || cmd === 'lock_now') {
+          manuallyLocked = true;
           showLockOverlay(reason);
         }
         // 2. Lệnh MỞ KHÓA CỬA SỔ
@@ -1008,40 +1032,21 @@ function connectWebSocket() {
         // 3. Phụ huynh TRỪ GIỜ THỜI GIAN THỰC
         else if (cmd === 'time_deducted' || cmd === 'deduct_time') {
           if (data.child_id != null && data.child_id !== childId) return;
-          if (data.version != null && data.version <= (currentPolicy?.version ?? -1)) return;
-          if (data.version != null && currentPolicy) currentPolicy.version = data.version;
-          const deductMin = data.deduct_min || data.minutes || 15;
-          const weekday = new Date().getDay();
-          const quota = weekday === 0 || weekday === 6 ? data.new_weekend_quota : data.new_weekday_quota;
-          const nextTotal = Number.isFinite(quota) ? quota * 60 : Math.max(0, totalSeconds - deductMin * 60);
-          remainingSeconds = Math.max(0, Math.min(nextTotal, remainingSeconds + nextTotal - totalSeconds));
-          totalSeconds = nextTotal;
-          updateTimeDisplay();
-          showToast(`⚡ Ba mẹ đã trừ bớt ${deductMin} phút (${reason})`);
-          if (remainingSeconds <= 0) {
-            handleTimeExpired();
-          }
+          syncUsage(false);
+          showToast(`⚡ Ba mẹ đã trừ bớt ${data.deduct_min || data.minutes || 15} phút (${reason})`);
         }
         // 4. Phụ huynh DUYỆT THÊM GIỜ
         else if (cmd === 'extend_time') {
-          const grantedMin = data.granted_minutes || 15;
           if (data.child_id != null && data.child_id !== childId) return;
-          if (data.policy_version != null && data.policy_version <= (currentPolicy?.version ?? -1)) return;
-          if (data.policy_version != null && currentPolicy) currentPolicy.version = data.policy_version;
-          remainingSeconds += grantedMin * 60;
-          totalSeconds += grantedMin * 60;
-          isTimeExpired = false;
-          timeExpiredNotified = false;
-          enableAppInteractions();
-          updateTimeDisplay();
-          if (isLocked) {
-            hideLockOverlay();
+          syncUsage(false);
+          if (data.granted_minutes) {
+            showToast(`🎉 Ba Mẹ đã duyệt thêm cho con +${data.granted_minutes} phút!`);
           }
-          showToast(`🎉 Tuyệt vời! Ba Mẹ đã duyệt thêm cho con +${grantedMin} phút!`);
         }
         // 5. Cập nhật chính sách mới
         else if (cmd === 'sync_policy') {
           loadInitialPolicy();
+          syncUsage(false);
         }
         // 6. Phụ huynh yêu cầu xem màn hình trẻ (Cần sự đồng thuận)
         else if (cmd === 'request_screen_consent' || cmd === 'request_screen') {

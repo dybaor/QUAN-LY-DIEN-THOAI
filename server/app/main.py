@@ -14,7 +14,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 
 from app.database import engine, Base, SessionLocal
-from app.models import Parent, Child, Policy, TimeRequest
+from app.models import Parent, Child, Policy
 from app.routers import enroll, policy_events, commands, requests as time_requests
 
 # 1. Khởi tạo cấu trúc bảng SQLite tự động theo chế độ WAL
@@ -57,16 +57,6 @@ try:
         db.add(default_policy)
         db.commit()
 
-    # Seed 1 yêu cầu xin thêm giờ nếu bảng rỗng
-    if not db.query(TimeRequest).first():
-        sample_req = TimeRequest(
-            child_id=1,
-            requested_minutes=15,
-            reason="Bé xin thêm 15 phút: Hoàn thành bài tập trực tuyến",
-            status="pending"
-        )
-        db.add(sample_req)
-        db.commit()
 finally:
     db.close()
 

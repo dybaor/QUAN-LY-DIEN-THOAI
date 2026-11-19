@@ -1,5 +1,5 @@
 import datetime
-from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, Boolean
+from sqlalchemy import Column, String, Integer, DateTime, Date, Float, ForeignKey, Boolean
 from sqlalchemy.orm import relationship
 from .database import Base
 
@@ -71,6 +71,14 @@ class DeviceEvent(Base):
     subject = Column(String(255), nullable=False) # Tên app hoặc Domain cấp 2 (không lưu URL đầy đủ)
     duration_sec = Column(Integer, default=0)
     policy_id = Column(Integer, nullable=True)
+
+
+class WebDailyUsage(Base):
+    __tablename__ = "web_daily_usage"
+    child_id = Column(Integer, ForeignKey("children.id"), primary_key=True)
+    day = Column(Date, primary_key=True)
+    used_seconds = Column(Float, nullable=False)
+    last_seen = Column(Float, nullable=False)
 
 
 class TimeRequest(Base):

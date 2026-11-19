@@ -1,4 +1,6 @@
 import hashlib
+from sqlalchemy import case, func
+from sqlalchemy.dialects.sqlite import insert
 from datetime import date, datetime, timedelta
 from typing import List, Optional, Union
 
@@ -7,7 +9,7 @@ from pydantic import BaseModel, Field, validator
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import DeviceEvent, Policy, Child, MonitoringSession, AccessHistoryLog
+from ..models import DeviceEvent, Policy, Child, MonitoringSession, AccessHistoryLog, WebDailyUsage
 from ..websocket_manager import manager
 
 router = APIRouter(tags=["Policies & Events"])
@@ -531,7 +533,7 @@ async def deduct_child_time(req: DeductTimeSchema, db: Session = Depends(get_db)
         db.add(policy)
 
     # Khấu trừ quota của ngày hiện tại
-    now_weekday = datetime.utcnow().weekday()
+    now_weekday = datetime.now().date().weekday()
     if now_weekday < 5:
         policy.daily_quota_weekday_min = max(0, policy.daily_quota_weekday_min - req.deduct_min)
     else:
@@ -674,6 +676,7 @@ def cleanup_old_events(db: Session = Depends(get_db)):
     """Xóa tự động các sự kiện cũ hơn 90 ngày theo hạn mức lưu trữ F3."""
     cutoff_date = datetime.utcnow() - timedelta(days=90)
     deleted_rows = db.query(DeviceEvent).filter(DeviceEvent.ts < cutoff_date).delete()
+    db.query(WebDailyUsage).filter(WebDailyUsage.day < (datetime.now().date() - timedelta(days=90))).delete()
     db.commit()
     return {"status": "success", "deleted_records_count": deleted_rows}
 
@@ -682,6 +685,7 @@ def cleanup_old_events(db: Session = Depends(get_db)):
 def purge_child_data(child_id: int, db: Session = Depends(get_db)):
     """Quyền được quên (Right to be Forgotten): Xóa toàn bộ dữ liệu của một trẻ."""
     del_events = db.query(DeviceEvent).filter(DeviceEvent.child_id == child_id).delete()
+    db.query(WebDailyUsage).filter(WebDailyUsage.child_id == child_id).delete()
     del_policies = db.query(Policy).filter(Policy.child_id == child_id).delete()
     db.commit()
     return {
@@ -695,51 +699,72 @@ def purge_child_data(child_id: int, db: Session = Depends(get_db)):
 # ==========================================
 # 4. SỐ LIỆU ĐỘNG CHO WEB DASHBOARD
 # ==========================================
+def daily_usage_seconds(child_id: int, day: date, db: Session) -> int:
+    start = datetime.combine(day, datetime.min.time())
+    end = start + timedelta(days=1)
+    # Agent timestamps are stored as naive UTC; day boundaries use server local time.
+    start_utc = datetime.utcfromtimestamp(start.timestamp())
+    end_utc = datetime.utcfromtimestamp(end.timestamp())
+    agent_seconds = db.query(func.sum(DeviceEvent.duration_sec)).filter(
+        DeviceEvent.child_id == child_id, DeviceEvent.type == "app_stop",
+        DeviceEvent.ts >= start_utc, DeviceEvent.ts < end_utc,
+    ).scalar() or 0
+    web = db.get(WebDailyUsage, (child_id, day))
+    # Both sources can observe the same activity, so avoid adding overlapping usage.
+    return max(0, agent_seconds, int(web.used_seconds) if web else 0)
+
+
+def time_snapshot(child_id: int, day: date, db: Session) -> dict:
+    policy = db.query(Policy).filter(Policy.child_id == child_id).first()
+    quota = 90
+    if policy:
+        quota = policy.daily_quota_weekend_min if day.weekday() >= 5 else policy.daily_quota_weekday_min
+    used = daily_usage_seconds(child_id, day, db)
+    return {
+        "today_minutes": used // 60,
+        "today_seconds": used,
+        "quota_minutes": quota,
+        "remaining_seconds": max(0, quota * 60 - used),
+    }
+
+
+@router.post("/web-usage/{child_id}")
+def track_web_usage(child_id: int, db: Session = Depends(get_db)):
+    now = datetime.now()
+    day = now.date()
+    settings = get_auth_settings(child_id, db)
+    if settings["is_initialized"] and time_snapshot(child_id, day, db)["remaining_seconds"] > 0:
+        sample = insert(WebDailyUsage).values(
+            child_id=child_id, day=day, used_seconds=0, last_seen=now.timestamp(),
+        )
+        gap = sample.excluded.last_seen - WebDailyUsage.last_seen
+        db.execute(sample.on_conflict_do_update(
+            index_elements=[WebDailyUsage.child_id, WebDailyUsage.day],
+            set_={
+                "used_seconds": WebDailyUsage.used_seconds + case(
+                    (gap.between(0, 12), gap), else_=0,
+                ),
+                "last_seen": func.max(WebDailyUsage.last_seen, sample.excluded.last_seen),
+            },
+        ))
+        db.commit()
+    return time_snapshot(child_id, day, db)
+
+
+@router.get("/web-usage/{child_id}")
+def get_web_usage(child_id: int, db: Session = Depends(get_db)):
+    return time_snapshot(child_id, datetime.now().date(), db)
+
+
 @router.get("/dashboard-stats/{child_id}")
 def get_dashboard_stats(child_id: int, db: Session = Depends(get_db)):
-    """Cung cấp dữ liệu động 7 ngày và hôm nay cho giao diện phụ huynh."""
-    today_start = datetime.combine(date.today(), datetime.min.time())
-
-    # Tính tổng phút dùng trong ngày hôm nay
-    today_events = (
-        db.query(DeviceEvent)
-        .filter(DeviceEvent.child_id == child_id, DeviceEvent.ts >= today_start)
-        .all()
-    )
-    today_minutes = sum(e.duration_sec for e in today_events) // 60
-
-    # Lấy định mức ngày thường của chính sách
-    policy = db.query(Policy).filter(Policy.child_id == child_id).first()
-    quota_minutes = 90
-    if policy:
-        quota_minutes = (policy.daily_quota_weekend_min if date.today().weekday() >= 5
-                         else policy.daily_quota_weekday_min)
-
-    # Lấy biểu đồ 7 ngày gần nhất
-    weekly_data = []
-    labels = []
-    for i in range(6, -1, -1):
-        day = date.today() - timedelta(days=i)
-        day_start = datetime.combine(day, datetime.min.time())
-        day_end = datetime.combine(day, datetime.max.time())
-
-        day_events = (
-            db.query(DeviceEvent)
-            .filter(
-                DeviceEvent.child_id == child_id,
-                DeviceEvent.ts >= day_start,
-                DeviceEvent.ts <= day_end,
-            )
-            .all()
-        )
-
-        minutes = sum(e.duration_sec for e in day_events) // 60
-        weekly_data.append(minutes)
-        labels.append(day.strftime("%d/%m"))
-
+    today = datetime.now().date()
+    snapshot = time_snapshot(child_id, today, db)
+    days = [today - timedelta(days=i) for i in range(6, -1, -1)]
     return {
-        "today_minutes": today_minutes,
-        "quota_minutes": quota_minutes,
-        "weekly_labels": labels,
-        "weekly_usage": weekly_data,
+        **snapshot,
+        "weekly_labels": [day.strftime("%d/%m") for day in days],
+        "weekly_usage": [
+            daily_usage_seconds(child_id, day, db) // 60 for day in days[:-1]
+        ] + [snapshot["today_minutes"]],
     }

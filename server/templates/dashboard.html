@@ -1587,7 +1587,7 @@
                 document.getElementById('todayProgressBar').style.width = `${percent}%`;
                 document.getElementById('usagePercentText').innerText = `${percent}% hạn mức`;
 
-                const remain = Math.max(0, data.quota_minutes - data.today_minutes);
+                const remain = Math.ceil((data.remaining_seconds ?? Math.max(0, data.quota_minutes - data.today_minutes) * 60) / 60);
                 document.getElementById('remainingTimeText').innerHTML = `${remain}<span>phút</span>`;
                 document.querySelector('.usage-card').dataset.level = remain === 0 ? 'empty' : percent >= 80 ? 'low' : 'normal';
 
@@ -2834,19 +2834,15 @@
                     body: JSON.stringify({
                         device_id: 'CHILD-PC',
                         action: 'extend_time',
+                        child_id: currentChildId,
                         reason: `Phụ huynh duyệt thêm ${minutes} phút từ cảnh báo hết giờ`,
                         duration_min: minutes
                     })
                 });
 
                 if (res.ok) {
-                    if (parentWs && parentWs.readyState === WebSocket.OPEN) {
-                        parentWs.send(JSON.stringify({
-                            action: 'extend_time',
-                            granted_minutes: minutes,
-                            reason: `Phụ huynh duyệt thêm ${minutes} phút`
-                        }));
-                    }
+                    loadPolicy();
+                    loadDashboardStats();
                     showToast(`✓ Đã duyệt thêm +${minutes} phút cho bé thành công!`, "success");
                     closeTimeExpiredAlertModal();
                     resetDeviceStatusToOnline();

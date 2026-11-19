@@ -87,6 +87,8 @@ async def approve_time_request(
         raise HTTPException(status_code=404, detail="Không tìm thấy yêu cầu")
 
     granted = (body.duration_min if body and body.duration_min else req.requested_minutes) or 15
+    if req.status != "pending":
+        raise HTTPException(status_code=409, detail="Yêu cầu đã được xử lý")
     req.status = "approved"
     req.granted_minutes = granted
     req.resolved_at = datetime.datetime.utcnow()
@@ -126,6 +128,8 @@ async def reject_time_request(request_id: int, db: Session = Depends(get_db)):
     if not req:
         raise HTTPException(status_code=404, detail="Không tìm thấy yêu cầu")
 
+    if req.status != "pending":
+        raise HTTPException(status_code=409, detail="Yêu cầu đã được xử lý")
     req.status = "rejected"
     req.resolved_at = datetime.datetime.utcnow()
     db.commit()
