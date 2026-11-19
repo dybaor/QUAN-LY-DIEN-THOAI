@@ -1,0 +1,75 @@
+================================================================================
+HƯỚNG DẪN TRIỂN KHAI VÀ SỬ DỤNG GÓI PHÁT HÀNH (DIST_PACKAGE)
+Dự án: "Người Bạn Đồng Hành" (OGK Child Device & Network Protection System)
+Thời gian triển khai: Dưới 5 phút | Không yêu cầu cài đặt Python
+================================================================================
+
+I. CẤU TRÚC GÓI PHÁT HÀNH (dist_package)
+--------------------------------------------------------------------------------
+├── agent_service.exe      : Ứng dụng Agent giám sát máy con (.exe độc lập, ẩn console)
+├── dns_proxy.exe          : Máy chủ DNS Proxy cục bộ chặn tên miền độc hại (.exe độc lập)
+├── blocklist.json         : Danh sách đen tên miền cấm (SafeSearch, DoH Canary, Web đen)
+├── install_service.bat    : Script 1-Click cài đặt Windows Service chạy ngầm LocalSystem
+├── start_proxy.bat        : Script 1-Click khởi chạy DNS Proxy lắng nghe cổng UDP 53
+├── uninstall_service.bat  : Script 1-Click dừng và gỡ bỏ hoàn toàn Windows Service
+└── HUONG_DAN_CAI_DAT.txt  : Tài liệu hướng dẫn sử dụng nhanh này
+
+II. YÊU CẦU HỆ THỐNG
+--------------------------------------------------------------------------------
+- Hệ điều hành: Windows 10 hoặc Windows 11 (64-bit / x64).
+- Quyền thực thi: Quyền Quản trị viên (Administrator) để tạo Windows Service và mở cổng mạng 53.
+- KHÔNG CẦN CÀI ĐẶT PYTHON hay bất kỳ phần mềm phụ trợ nào khác.
+
+III. CÁC BƯỚC CÀI ĐẶT NHANH (DƯỚI 5 PHÚT)
+--------------------------------------------------------------------------------
+1. CÀI ĐẶT VÀ KHỞI ĐỘNG AGENT GIÁM SÁT MÁY CON (AGENT SERVICE)
+   Bước 1: Copy toàn bộ thư mục `dist_package` sang máy tính con cần giám sát
+           (Ví dụ đặt tại: `C:\OGKAgent\`).
+   Bước 2: Click chuột phải vào file `install_service.bat`.
+   Bước 3: Chọn "Run as administrator" (Chạy với quyền Quản trị viên).
+   Bước 4: Script sẽ tự động:
+           + Tạo thư mục cơ sở dữ liệu đệm tại `%ProgramData%\OGKAgent`.
+           + Phân quyền bảo mật cao cho LocalSystem và Administrators.
+           + Đăng ký Windows Service với tên `OGKChildAgent` chạy tự động khi bật máy.
+           + Cấu hình cơ chế TỰ ĐỘNG KHỞI PHỤC SAU 5 GIÂY NẾU CRASH (Tiêu chuẩn M5).
+           + Khởi chạy dịch vụ ngay lập tức.
+   Bước 5: Màn hình hiển thị [SUCCESS] là bạn đã hoàn tất!
+
+2. KHỞI CHẠY DNS PROXY CHẶN TRANG WEB ĐỘC HẠI & CƯỠNG CHẾ SAFESEARCH
+   Bước 1: Click chuột phải vào file `start_proxy.bat`.
+   Bước 2: Chọn "Run as administrator".
+   Bước 3: Cửa sổ console sẽ hiện thông báo máy chủ đang lắng nghe tại UDP 127.0.0.1:53.
+   Bước 4: Đổi DNS của Card mạng (Network Adapter) trên máy tính con:
+           + Mở Control Panel -> Network and Sharing Center -> Change adapter settings.
+           + Click chuột phải vào Wi-Fi hoặc Ethernet -> Properties.
+           + Chọn "Internet Protocol Version 4 (TCP/IPv4)" -> Properties.
+           + Chọn "Use the following DNS server addresses":
+             Preferred DNS server: 127.0.0.1
+             Alternate DNS server: 8.8.8.8
+           + Nhấn OK để lưu.
+   -> Mọi truy vấn tên miền cấm (Porn, Gambling, Violence, DoH Canary) sẽ bị Sinkhole về 0.0.0.0.
+
+IV. CÁCH KIỂM TRA TRẠNG THÁI HOẠT ĐỘNG
+--------------------------------------------------------------------------------
+1. Kiểm tra qua Task Manager:
+   - Mở Task Manager (Ctrl + Shift + Esc) -> Tab "Services" (Dịch vụ).
+   - Tìm dịch vụ `OGKChildAgent` -> Trạng thái hiển thị là "Running".
+2. Kiểm tra qua Services Manager:
+   - Nhấn phím Windows + R -> Nhập `services.msc` -> Enter.
+   - Tìm "OGK Child Monitoring Agent" -> Xem Recovery tab: "Restart the Service" sau 1 minute / 5 seconds.
+3. Kiểm tra bằng Command Prompt / PowerShell (Run as Administrator):
+   - Nhập lệnh: `sc query OGKChildAgent`
+   - Nhập lệnh: `sc qfailure OGKChildAgent`
+4. Kiểm tra Cơ sở dữ liệu Cache SQLite cục bộ:
+   - File cache được lưu tại: `%ProgramData%\OGKAgent\agent_cache.db`
+   - Đảm bảo hoạt động độc lập ngay cả khi mất kết nối mạng (Offline Resilience).
+
+V. GỠ BỎ DỊCH VỤ (UNINSTALL)
+--------------------------------------------------------------------------------
+- Khi không còn nhu cầu giám sát hoặc muốn gỡ cài đặt sạch sẽ:
+  Click chuột phải vào file `uninstall_service.bat` -> Chọn "Run as administrator".
+  Dịch vụ `OGKChildAgent` sẽ tự động dừng và bị xóa hoàn toàn khỏi hệ điều hành Windows.
+
+================================================================================
+Chúc bạn triển khai thành công Hệ thống Quản lý "Người Bạn Đồng Hành" (OGK)!
+================================================================================

@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Người Bạn Đồng Hành — Cửa Sổ Trẻ Em (Child Portal)</title>
+    <!-- Tailwind CSS CDN để hỗ trợ layout nhanh chóng -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/static/css/child.css">
+    <link rel="stylesheet" href="/static/css/ui.css?v=timeline">
+    <style>
+        @keyframes loadingBar {
+            0% { transform: translateX(-100%); }
+            50% { transform: translateX(50%); }
+            100% { transform: translateX(200%); }
+        }
+        button, .launch-btn, .app-card {
+            transition: transform 0.15s ease-out, box-shadow 0.15s ease-out, background-color 0.15s ease-out;
+        }
+        button:active, .launch-btn:active, .app-card:active {
+            transform: scale(0.96);
+        }
+    </style>
+</head>
+<body class="child-app text-slate-100 selection:bg-cyan-500 selection:text-white">
+
+    <!-- ========================================================================= -->
+    <!-- MÀN HÌNH CHỜ KHỞI TẠO TỪ PHỤ HUYNH (WAITING SCREEN / SPLASH STATE)        -->
+    <!-- ========================================================================= -->
+    <div id="waitingScreenState" class="fixed inset-0 z-[999999] bg-slate-950 flex flex-col items-center justify-center p-6 text-center transition-all duration-700 ease-in-out">
+        <div class="relative mb-6">
+            <!-- Glowing pulse ring -->
+            <div class="absolute -inset-4 bg-gradient-to-r from-cyan-500 to-teal-400 rounded-full blur-xl opacity-40 animate-pulse"></div>
+            <div class="relative w-24 h-24 rounded-3xl bg-slate-900 border border-cyan-500/40 flex items-center justify-center text-5xl shadow-2xl">
+                ⏳
+            </div>
+        </div>
+        
+        <h2 class="text-2xl md:text-3xl font-black text-white tracking-tight mb-3">
+            Đang kết nối với phụ huynh...
+        </h2>
+        <p class="text-slate-400 text-sm md:text-base max-w-md leading-relaxed mb-8">
+            Hệ thống đang được thiết lập. Vui lòng chờ ba mẹ hoàn tất cài đặt trong giây lát...
+        </p>
+
+        <!-- Animated Loading Bar -->
+        <div class="w-64 bg-slate-900 h-2 rounded-full overflow-hidden border border-slate-800 p-0.5">
+            <div class="bg-gradient-to-r from-cyan-400 via-teal-400 to-emerald-400 h-full rounded-full w-1/2 animate-[loadingBar_1.8s_ease-in-out_infinite]"></div>
+        </div>
+        <div class="text-[11px] text-cyan-400/80 font-mono mt-3 animate-pulse">
+            Ba mẹ đang chuẩn bị góc học tập cho con
+        </div>
+    </div>
+
+    <!-- Top Status Bar (Thanh trạng thái Acrylic Glassmorphism) -->
+    <header class="glass-header px-6 py-4">
+        <div class="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
+            
+            <!-- Logo & Bé An -->
+            <div class="flex items-center space-x-3">
+                <div class="w-11 h-11 rounded-2xl bg-gradient-to-tr from-cyan-500 to-emerald-400 flex items-center justify-center text-2xl shadow-lg shadow-cyan-500/20">
+                    🌟
+                </div>
+                <div>
+                    <div class="flex items-center space-x-2">
+                        <h1 class="text-lg font-black tracking-tight text-white">Trạm Học Tập — <span id="childNameDisplay">Bé An</span></h1>
+                        <span id="wsStatusBadge" class="badge-status badge-online">🟢 Trực tuyến</span>
+                    </div>
+                    <div class="flex items-center space-x-2 text-xs text-slate-400 mt-0.5">
+                        <span id="modeBadge" class="badge-status badge-mode">📚 Chế độ: Giờ học tập</span>
+                        <span>•</span>
+                        <span id="digitalClock" class="font-mono text-cyan-400 font-bold">--:-- AM</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Đồng hồ đo thời gian còn lại (Usage Quota) & Nút xin thêm giờ -->
+            <div class="flex flex-wrap items-center gap-4 w-full md:w-auto justify-end">
+                <!-- Hạn mức thời gian -->
+                <div class="child-time bg-slate-800/80 border border-slate-700/80 px-4 py-2.5 rounded-2xl shadow-inner min-w-[220px]">
+                    <div class="flex justify-between items-center text-xs mb-1.5">
+                        <span class="text-slate-400 font-medium">⏳ Con còn hôm nay</span>
+                        <span class="font-bold text-emerald-400" id="remainingMinutes">120 phút</span>
+                    </div>
+                    <!-- Thanh tiến trình thời gian -->
+                    <div class="w-full bg-slate-900 rounded-full h-2 overflow-hidden border border-slate-700/50">
+                        <div id="timeProgressBar" class="h-full rounded-full transition-all duration-500" style="width: 100%; background: linear-gradient(90deg, #10b981, #06b6d4);"></div>
+                    </div>
+                </div>
+
+                <!-- Nút xin thêm giờ -->
+                <button onclick="openRequestTimeModal()" class="bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 active:scale-95 text-white font-bold py-2.5 px-4 rounded-xl shadow-lg shadow-amber-500/20 transition flex items-center space-x-2 text-sm">
+                    <span>🙋‍♂️</span>
+                    <span>Xin thêm giờ</span>
+                </button>
+            </div>
+
+        </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <main class="max-w-7xl mx-auto px-6 pt-8 space-y-8">
+
+        <section id="todayTimeline" class="ogk-timeline ogk-timeline-child" aria-label="Lịch hôm nay" hidden></section>
+
+        <!-- Banner Lời Chào & Thanh tìm kiếm ứng dụng thông minh -->
+        <section class="child-discovery glass-panel p-6 md:p-8">
+            <div class="max-w-3xl">
+                <h2 class="text-2xl md:text-3xl font-black text-white tracking-tight mb-6">
+                    Hôm nay, con muốn khám phá gì?
+                </h2>
+
+                <!-- Thanh tìm kiếm nhanh ứng dụng & trang web cục bộ (Local App Search) -->
+                <div class="relative flex items-center">
+                    <span class="absolute inset-y-0 left-0 flex items-center pl-4 text-slate-400 text-lg pointer-events-none">
+                        🔍
+                    </span>
+                    <input 
+                        type="text" 
+                        id="searchAppInput"
+                        aria-label="Tìm ứng dụng hoặc trang web" placeholder="Tìm ứng dụng hoặc trang web…"
+                        oninput="filterApps()"
+                        class="w-full bg-slate-900/90 border border-slate-700/80 rounded-2xl py-3.5 pl-12 pr-28 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition shadow-inner"
+                    >
+                    <button 
+                        id="btnSearchGoogle"
+                        onclick="handleGoogleOrDomainSearch()"
+                        class="absolute right-2 top-1/2 -translate-y-1/2 bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-600 hover:to-cyan-600 active:scale-95 text-white font-bold px-4 py-2 rounded-xl text-xs transition shadow-md flex items-center space-x-1.5 cursor-pointer"
+                        title="Tìm kiếm ứng dụng hoặc mở trang web"
+                    >
+                        <span>Tìm</span>
+                        <span class="text-xs">↵</span>
+                    </button>
+                    <button 
+                        id="btnClearSearch"
+                        onclick="clearSearchInput()"
+                        class="absolute right-20 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white p-1 rounded-lg text-sm hidden transition"
+                        title="Xóa tìm kiếm"
+                    >✕</button>
+                </div>
+            </div>
+
+            <!-- Bộ lọc Thư mục / Phân loại ứng dụng -->
+            <div class="flex flex-wrap gap-2 mt-6 pt-6 border-t border-slate-700/50">
+                <button class="folder-pill active" data-cat="all">
+                    <span>📁</span>
+                    <span>Tất cả ứng dụng</span>
+                </button>
+                <button class="folder-pill" data-cat="study">
+                    <span>📚</span>
+                    <span>Góc học tập</span>
+                </button>
+                <button class="folder-pill" data-cat="creative">
+                    <span>🎨</span>
+                    <span>Sáng tạo</span>
+                </button>
+                <button class="folder-pill" data-cat="entertainment">
+                    <span>🎮</span>
+                    <span>Giải trí</span>
+                </button>
+            </div>
+        </section>
+
+        <!-- Lưới ứng dụng (Smart Mobile App Grid) -->
+        <section>
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-sm font-bold uppercase tracking-wider text-slate-400">
+                    Kho ứng dụng & Công cụ học tập
+                </h3>
+                <span class="text-xs text-slate-500">Chọn một ứng dụng để bắt đầu</span>
+            </div>
+
+            <div id="appGrid" class="app-grid">
+                <!-- Javascript sẽ tự động render các thẻ ứng dụng tại đây -->
+            </div>
+        </section>
+
+    </main>
+
+    <!-- ========================================================================= -->
+    <!-- 1. MÀN HÌNH KHÓA CÔ LẬP TRONG TRANG (IN-PAGE LOCK OVERLAY)                 -->
+    <!-- TUYỆT ĐỐI KHÔNG CAN THIỆP FULLSCREEN OS - CỬA SỔ GIỮ NGUYÊN KÍCH THƯỚC    -->
+    <!-- ========================================================================= -->
+    <div id="lockOverlay">
+        <div class="lock-card">
+            <div class="text-6xl mb-4 animate-bounce">
+                🔒
+            </div>
+            <h2 class="text-2xl font-black text-rose-400 tracking-tight mb-2">
+                ĐÃ TẠM KHÓA PHIÊN LÀM VIỆC
+            </h2>
+            <p class="text-slate-300 text-sm leading-relaxed mb-3">
+                Trang đã tạm khóa theo yêu cầu của ba mẹ hoặc đã hết giờ dùng máy hôm nay.<br>
+                Hãy đứng dậy vận động một chút và cho mắt nghỉ ngơi nhé! ☕🌱
+            </p>
+            
+            <!-- Đồng hồ thời gian thực và trạng thái thời gian trên màn hình khóa -->
+            <div class="flex items-center justify-center space-x-2 text-xs font-semibold text-slate-300 bg-slate-900/80 py-2 px-4 rounded-xl border border-slate-700/60 mb-3">
+                <span>⏰</span>
+                <span id="lockOverlayClock">--:--</span>
+                <span class="text-slate-600">•</span>
+                <span id="lockOverlayTimeStatus" class="text-rose-400 font-bold">Đã hết giờ sử dụng</span>
+            </div>
+
+            <p id="lockReasonText" class="text-xs text-slate-400 italic bg-slate-900/60 py-1.5 px-3 rounded-lg mb-5 border border-slate-800">
+                Lý do: Lệnh từ phụ huynh
+            </p>
+
+            <!-- Cụm mở khóa tại chỗ dành cho Ba Mẹ (Parent PIN) -->
+            <div class="bg-slate-800/80 p-4 rounded-2xl border border-slate-700/60 mb-4 text-left">
+                <label class="block text-xs font-bold text-slate-300 mb-2">
+                    🔑 Mở khóa tại chỗ (Dành riêng cho Ba Mẹ):
+                </label>
+                <div class="flex gap-2">
+                    <input 
+                        type="password" 
+                        id="parentPinInput" 
+                        maxlength="50"
+                        placeholder="Nhập mã PIN của phụ huynh..." 
+                        class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-center font-bold tracking-widest text-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                    >
+                    <button 
+                        id="btnUnlockPin" 
+                        class="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold px-4 py-2 rounded-xl text-sm transition shadow-md whitespace-nowrap"
+                    >
+                        Mở khóa
+                    </button>
+                </div>
+            </div>
+
+            <!-- Nút gửi lời nhắn xin thêm giờ từ màn hình khóa -->
+            <button 
+                onclick="openRequestTimeModal()" 
+                class="w-full bg-slate-800 hover:bg-slate-700 active:scale-95 text-amber-400 font-semibold py-2.5 px-4 rounded-xl text-sm border border-amber-500/30 transition flex items-center justify-center space-x-2"
+            >
+                <span>🙋‍♂️</span>
+                <span>Xin ba mẹ thêm thời gian</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- ========================================================================= -->
+    <!-- 2. IN-APP BROWSER / VIEWER (MỞ WEB HỌC TẬP NỘI BỘ, KHÔNG RÒ RỈ RA NGOÀI)   -->
+    <!-- ========================================================================= -->
+    <div id="inAppBrowserModal">
+        <div class="browser-container">
+            <!-- Toolbar trên của trình duyệt nhúng -->
+            <div class="browser-toolbar">
+                <button onclick="closeInAppBrowser()" class="w-3.5 h-3.5 rounded-full bg-rose-500 hover:bg-rose-600 transition" title="Đóng"></button>
+                <button onclick="document.getElementById('internalBrowserFrame').contentWindow.history.back()" class="text-slate-400 hover:text-white px-2 py-1 text-sm font-bold" title="Quay lại">←</button>
+                <button onclick="document.getElementById('internalBrowserFrame').src = document.getElementById('internalBrowserFrame').src" class="text-slate-400 hover:text-white px-2 py-1 text-sm font-bold" title="Tải lại">🔄</button>
+                
+                <div class="browser-url-bar">
+                    <span class="text-emerald-400 text-xs">🔒 An toàn</span>
+                    <span id="browserTitleDisplay" class="font-bold text-white text-xs">Trình đọc an toàn</span>
+                    <span class="text-slate-600">|</span>
+                    <span id="browserUrlDisplay" class="text-xs text-slate-400">about:blank</span>
+                </div>
+
+                <button onclick="closeInAppBrowser()" class="bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg border border-slate-700 transition">
+                    ✕ Đóng cửa sổ
+                </button>
+            </div>
+
+            <!-- Iframe an toàn nạp nội dung trang web -->
+            <iframe 
+                id="internalBrowserFrame" 
+                class="browser-frame" 
+                sandbox="allow-scripts allow-same-origin allow-forms"
+                src="about:blank"
+            ></iframe>
+        </div>
+    </div>
+
+    <!-- ========================================================================= -->
+    <!-- 3. MODAL XIN THÊM THỜI GIAN (TIME EXTENSION REQUEST)                      -->
+    <!-- ========================================================================= -->
+    <div id="requestTimeModal" class="fixed inset-0 z-[88888] bg-slate-950/80 backdrop-blur-md hidden items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-700 p-6 rounded-2xl max-w-md w-full shadow-2xl">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-black text-white flex items-center space-x-2">
+                    <span>🙋‍♂️</span>
+                    <span>Gửi yêu cầu xin thêm giờ</span>
+                </h3>
+                <button onclick="closeRequestTimeModal()" class="text-slate-400 hover:text-white font-bold text-lg">✕</button>
+            </div>
+            
+            <p class="text-xs text-slate-400 mb-4">
+                Yêu cầu của con sẽ xuất hiện ngay lập tức trên màn hình phụ huynh để Ba Mẹ phê duyệt.
+            </p>
+
+            <div class="space-y-3 mb-5">
+                <label class="block text-xs font-bold text-slate-300">Chọn số phút muốn xin thêm:</label>
+                <div class="grid grid-cols-2 gap-3">
+                    <button onclick="submitTimeRequest(15, 'Bé xin thêm 15 phút làm bài tập trực tuyến')" class="bg-slate-800 hover:bg-slate-700 active:scale-95 border border-slate-700 p-3 rounded-xl text-center font-bold text-cyan-400 transition">
+                        +15 Phút
+                    </button>
+                    <button onclick="submitTimeRequest(30, 'Bé xin thêm 30 phút hoàn thành dự án học tập')" class="bg-slate-800 hover:bg-slate-700 active:scale-95 border border-slate-700 p-3 rounded-xl text-center font-bold text-emerald-400 transition">
+                        +30 Phút
+                    </button>
+                </div>
+            </div>
+
+            <div class="flex justify-end">
+                <button onclick="closeRequestTimeModal()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold px-4 py-2 rounded-xl text-xs transition">
+                    Hủy bỏ
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========================================================================= -->
+    <!-- 4. MODAL YÊU CẦU CHIA SẺ MÀN HÌNH TỪ BA MẸ (SCREEN CONSENT MODAL)          -->
+    <!-- ========================================================================= -->
+    <div id="screenConsentModal" class="fixed inset-0 z-[99999] bg-slate-950/85 backdrop-blur-md hidden items-center justify-center p-4">
+        <div class="bg-slate-900 border-2 border-cyan-500/50 p-6 md:p-8 rounded-3xl max-w-lg w-full shadow-2xl text-center relative">
+            <button onclick="respondScreenConsent(false)" class="absolute top-4 right-4 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition" title="Đóng (Esc)">✕</button>
+            <div class="w-16 h-16 mx-auto mb-4 rounded-2xl bg-cyan-500/20 text-cyan-400 flex items-center justify-center text-3xl animate-pulse">
+                👁️
+            </div>
+            <h3 class="text-xl font-black text-white tracking-tight mb-2">
+                BA MẸ YÊU CẦU XEM MÀN HÌNH
+            </h3>
+            <p class="text-slate-300 text-sm leading-relaxed mb-6">
+                Ba Mẹ muốn quan sát màn hình học tập để đồng hành và hỗ trợ con khi cần.<br>
+                Con có đồng ý chia sẻ màn hình làm việc không?
+            </p>
+            <div class="flex gap-4 justify-center">
+                <button id="btnRejectConsent" onclick="respondScreenConsent(false)" class="bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-300 font-bold px-6 py-3 rounded-2xl border border-slate-700 transition">
+                    ✕ Từ chối
+                </button>
+                <button id="btnApproveConsent" onclick="respondScreenConsent(true)" class="bg-gradient-to-r from-cyan-500 to-emerald-500 hover:from-cyan-600 hover:to-emerald-600 active:scale-95 text-white font-bold px-6 py-3 rounded-2xl shadow-lg shadow-cyan-500/30 transition">
+                    ✓ Đồng ý chia sẻ
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Floating Screen Share Indicator Badge -->
+    <div id="screenShareIndicator" class="fixed bottom-6 left-6 z-[8888] bg-rose-950/90 border border-rose-500/60 text-white px-4 py-2.5 rounded-2xl shadow-xl backdrop-blur-md hidden items-center space-x-3">
+        <span class="w-3 h-3 rounded-full bg-rose-500 animate-ping"></span>
+        <span class="text-xs font-bold text-rose-200">🔴 Đang chia sẻ màn hình với Ba Mẹ</span>
+        <button onclick="stopScreenShare()" class="bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-3 py-1 rounded-xl transition">
+            Dừng chia sẻ
+        </button>
+    </div>
+
+    <!-- ========================================================================= -->
+    <!-- ========================================================================= -->
+    <!-- 5. WIDGET CHAT REALTIME 2 CHIỀU VỚI BA MẸ (DARK GLASSMORPHISM) -->
+    <!-- ========================================================================= -->
+    <!-- Nút mở khung chat nổi góc dưới phải -->
+    <button id="floatingChatBtn" onclick="toggleChildChat()" style="position: fixed; bottom: 24px; right: 24px; z-index: 9998; height: 48px; border-radius: 9999px; padding: 0 18px; background: rgba(30, 41, 59, 0.85); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.12); color: #f8fafc; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.3);" class="flex items-center space-x-2 font-semibold text-sm transition-all hover:scale-105 active:scale-95 cursor-pointer">
+        <span class="text-lg">💬</span>
+        <span>Nhắn tin cho Ba Mẹ</span>
+        <span id="childChatUnreadBadge" class="hidden bg-rose-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full ml-1 animate-pulse">0</span>
+    </button>
+
+    <!-- Khung Chat Nổi Widget (z-index: 9999 - Vượt trên cả màn hình khóa z-9990) -->
+    <div id="floatingChatWindow" class="ogk-chat hidden flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+        <!-- Header Chat -->
+        <div class="ogk-chat-header flex items-center justify-between">
+            <div class="flex items-center space-x-2">
+                <h4 class="font-bold text-sm">Trò chuyện với Ba Mẹ</h4>
+            </div>
+            <button onclick="toggleChildChat()" class="ogk-chat-close" title="Đóng (Esc)">
+                ✕
+            </button>
+        </div>
+
+        <!-- Vùng danh sách tin nhắn -->
+        <div id="childChatMessageList" class="ogk-chat-list flex-1 min-h-0 overflow-y-auto space-y-2">
+        </div>
+
+        <!-- Thanh gợi ý tin nhắn nhanh -->
+        <div class="ogk-chat-quick flex flex-wrap gap-1">
+            <button onclick="sendQuickChildMsg('Ba mẹ ơi mở cho con 15 phút làm bài tập với ạ!')" class="ogk-chat-chip">
+                🙋‍♂️ Xin mở 15p
+            </button>
+            <button onclick="sendQuickChildMsg('Con đã làm xong bài tập rồi ba mẹ ơi!')" class="ogk-chat-chip">
+                ✅ Đã xong bài
+            </button>
+            <button onclick="sendQuickChildMsg('Ba mẹ ơi kiểm tra giúp con với ạ!')" class="ogk-chat-chip">
+                ❓ Ba mẹ ơi
+            </button>
+        </div>
+
+        <!-- Khung nhập và gửi tin nhắn -->
+        <div class="ogk-chat-compose flex gap-2">
+            <input 
+                type="text" 
+                id="childChatInput" 
+                placeholder="Gõ tin nhắn gửi ba mẹ..." 
+                class="ogk-chat-input"
+                onkeydown="if(event.key === 'Enter' && !event.isComposing) { event.preventDefault(); sendChildChatMessage(); }"
+            >
+            <button type="button" onclick="sendChildChatMessage()" class="ogk-chat-send">
+                Gửi
+            </button>
+        </div>
+    </div>
+
+    <!-- ========================================================================= -->
+    <!-- 6. KHUNG MÔ PHỎNG ỨNG DỤNG AN TOÀN (MOCK APP - ZERO NATIVE OS CALL)       -->
+    <!-- ========================================================================= -->
+    <div id="mockAppModal" class="fixed inset-0 z-[100008] bg-black/80 backdrop-blur-md hidden items-center justify-center p-4">
+        <div class="bg-slate-900 border-2 border-slate-700/80 rounded-3xl p-6 max-w-md w-full shadow-2xl text-center space-y-4 animate-in fade-in zoom-in-95 duration-200">
+            <!-- Thanh tiêu đề app -->
+            <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div class="flex items-center space-x-2">
+                    <span id="mockAppHeaderIcon" class="text-2xl">📱</span>
+                    <span id="mockAppHeaderTitle" class="font-bold text-white text-base">Tên ứng dụng</span>
+                </div>
+                <button onclick="closeMockAppModal()" class="text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg px-2.5 py-1 text-sm font-bold transition">
+                    ✕
+                </button>
+            </div>
+
+            <!-- Khung mô phỏng ứng dụng -->
+            <div class="py-8 px-4 bg-slate-950/70 rounded-2xl border border-slate-800/80 flex flex-col items-center justify-center space-y-3">
+                <div id="mockAppCenterIcon" class="text-6xl animate-bounce">
+                    📱
+                </div>
+                <h3 id="mockAppStatusText" class="text-xl font-black text-cyan-400">
+                    Đang mở app Máy tính Casio...
+                </h3>
+                <p class="text-xs text-slate-400 max-w-xs leading-relaxed">
+                    Không gian ứng dụng an toàn cho bé • Không can thiệp phần mềm máy tính ngoài.
+                </p>
+                <div class="w-48 h-1.5 bg-slate-800 rounded-full overflow-hidden mt-2">
+                    <div class="h-full bg-gradient-to-r from-cyan-500 to-emerald-400 animate-pulse w-3/4 rounded-full"></div>
+                </div>
+            </div>
+
+            <button onclick="closeMockAppModal()" class="w-full bg-slate-800 hover:bg-slate-700 active:scale-95 text-white font-bold py-2.5 rounded-xl border border-slate-700 text-sm transition">
+                Đóng ứng dụng ✕
+            </button>
+        </div>
+    </div>
+
+    <!-- ========================================================================= -->
+    <!-- 7. MODAL THÔNG BÁO HẠN CHẾ TRUY CẬP (VIOLATION BLOCK MODAL)               -->
+    <!-- ========================================================================= -->
+    <div id="violationBlockModal" class="fixed inset-0 z-[100010] bg-black/80 backdrop-blur-md hidden items-center justify-center p-4">
+        <div class="bg-slate-900 border-2 border-rose-500/80 rounded-3xl p-6 max-w-sm w-full text-center shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-200 relative">
+            <button onclick="closeViolationBlockModal()" class="absolute top-4 right-4 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition" title="Đóng (Esc)">✕</button>
+            <div class="text-6xl animate-bounce">🚫</div>
+            <div>
+                <h3 class="text-xl font-black text-rose-400">Nội dung này đang được giới hạn</h3>
+                <p class="text-xs text-slate-400 mt-1">Nội dung nằm trong danh sách giới hạn của Ba Mẹ</p>
+            </div>
+            <p id="violationBlockTargetText" class="text-sm font-bold text-white bg-rose-950/60 py-2.5 px-3 rounded-xl border border-rose-800/50">
+                Ứng dụng / Trang web đã bị ba mẹ hạn chế truy cập!
+            </p>
+            <p class="text-xs text-slate-300 leading-relaxed">
+                Để đảm bảo an toàn và thời gian học tập, con vui lòng chọn các ứng dụng và trang web được cho phép nhé.
+            </p>
+            <button onclick="closeViolationBlockModal()" class="w-full bg-slate-800 hover:bg-slate-700 active:scale-95 text-white font-bold py-2.5 rounded-xl border border-slate-700 text-sm transition">
+                Đã hiểu ✕
+            </button>
+        </div>
+    </div>
+
+    <!-- Toast Notification Container -->
+    <div id="toastContainer" class="toast-box"></div>
+
+    <!-- Nạp script logic chính của trang con -->
+    <script src="/static/js/time-timeline.js"></script>
+    <script src="/static/js/child.js?v=timeline"></script>
+</body>
+</html>
+

@@ -65,12 +65,12 @@ demo/
 ## 3. HƯỚNG DẪN 1 BƯỚC KHỞI ĐỘNG NHANH ĐỂ DEMO (QUICK START)
 
 ### Cách 1: Sử dụng Bản Phát Hành 1-Click (Khuyên dùng)
-1. Mở thư mục `dist_package/`.
-2. Click chuột phải vào **`Start_App.bat`** -> chọn **"Run as administrator"**.
-3. Hệ thống sẽ tự động:
-   - Khởi động **OGK Server** tại `http://127.0.0.1:8000`.
-   - Khởi động **DNS Proxy** tại cổng 53 để lọc web xấu.
-   - Mở đồng thời **Dashboard Phụ huynh** (`/`) và **Trạm Học tập của Trẻ** (`/child`) trên trình duyệt.
+1. Tải hoặc clone repository, rồi mở thư mục `dist_package/`.
+2. Nhấp đúp **`Start_App.bat`** để chạy OGK Server, Agent và mở hai giao diện trên trình duyệt.
+3. Để bật DNS Proxy, chạy riêng **`start_proxy.bat`** bằng quyền Administrator.
+4. Dùng **`Stop_App.bat`** để dừng Server và Agent.
+
+> `dist_package/` chứa bộ chạy Windows dựng sẵn. Mã nguồn mới nhất nằm trong `server/`, `agent/` và `dns_proxy/`; các file `.exe` trong gói là bản dựng hiện có và cần được build lại trên Windows sau khi cập nhật mã nguồn. Database và cache runtime không được đưa lên GitHub.
 
 ### Cách 2: Khởi chạy từ Mã Nguồn Python
 Yêu cầu: Python 3.11+ trên Windows 10/11 x64.

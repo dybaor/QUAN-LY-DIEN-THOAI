@@ -1,0 +1,4 @@
+*.db
+*.db-shm
+*.db-wal
+ogk_agent_data/
