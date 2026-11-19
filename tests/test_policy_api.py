@@ -19,20 +19,36 @@ for p in [str(BASE_DIR), str(SERVER_DIR)]:
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from app.database import SessionLocal
-from app.models import Policy
-from app.routers.policy_events import (
-    get_child_policy, 
-    PolicyUpdateSchema, 
-    launch_desktop_app,
-    LaunchAppSchema,
-    get_settings,
-    update_settings,
-    SettingsUpdateSchema,
-    verify_pin,
-    VerifyPinSchema,
-    reset_system_state
-)
+try:
+    from server.app.database import SessionLocal
+    from server.app.models import Policy
+    from server.app.routers.policy_events import (
+        get_child_policy, 
+        PolicyUpdateSchema, 
+        launch_desktop_app,
+        LaunchAppSchema,
+        get_settings,
+        update_settings,
+        SettingsUpdateSchema,
+        verify_pin,
+        VerifyPinSchema,
+        reset_system_state
+    )
+except ImportError:
+    from app.database import SessionLocal  # type: ignore
+    from app.models import Policy  # type: ignore
+    from app.routers.policy_events import (  # type: ignore
+        get_child_policy, 
+        PolicyUpdateSchema, 
+        launch_desktop_app,
+        LaunchAppSchema,
+        get_settings,
+        update_settings,
+        SettingsUpdateSchema,
+        verify_pin,
+        VerifyPinSchema,
+        reset_system_state
+    )
 from pydantic import ValidationError
 
 

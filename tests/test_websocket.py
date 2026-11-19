@@ -17,7 +17,10 @@ for p in [str(BASE_DIR), str(SERVER_DIR)]:
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from app.websocket_manager import ConnectionManager
+try:
+    from server.app.websocket_manager import ConnectionManager
+except ImportError:
+    from app.websocket_manager import ConnectionManager  # type: ignore
 
 
 class TestWebSocket(unittest.TestCase):

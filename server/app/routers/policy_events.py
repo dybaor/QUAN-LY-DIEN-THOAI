@@ -5,12 +5,15 @@ from datetime import date, datetime, timedelta
 from typing import List, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
-from pydantic import BaseModel, Field, validator
+try:
+    from pydantic import BaseModel, Field, field_validator
+except ImportError:
+    from pydantic import BaseModel, Field, validator as field_validator
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..daily_time import adjust_today, adjustment_minutes
-from ..models import DeviceEvent, Policy, Child, MonitoringSession, AccessHistoryLog, WebDailyUsage, DailyTimeAdjustment, ChildWindowLock
+from ..models import DeviceEvent, Policy, Child, MonitoringSession, AccessHistoryLog, WebDailyUsage, DailyTimeAdjustment, ChildWindowLock, TimeRequest
 from ..websocket_manager import manager
 
 router = APIRouter(tags=["Policies & Events"])
@@ -35,7 +38,8 @@ class PolicyUpdateSchema(BaseModel):
     child_name: Optional[str] = None
     lock_pin: Optional[str] = None
 
-    @validator("schedule_matrix")
+    @field_validator("schedule_matrix")
+    @classmethod
     def validate_schedule_matrix(cls, v):
         if v is not None:
             v = v.strip()
@@ -263,11 +267,22 @@ def reset_system_state(db: Session = Depends(get_db)):
         policy.child_name = None
         policy.lock_pin = None
         policy.lock_password_hash = None
+        policy.daily_quota_weekday_min = 120
+        policy.daily_quota_weekend_min = 180
+        policy.schedule_matrix = "1" * 168
+        policy.blocked_apps = ""
+        policy.blocked_domains = ""
         policy.version = 1
-    db.query(ChildWindowLock).filter_by(child_id=1).delete()
     child = db.query(Child).filter(Child.id == 1).first()
     if child:
         child.name = None
+    db.query(ChildWindowLock).delete()
+    db.query(DailyTimeAdjustment).delete()
+    db.query(TimeRequest).delete()
+    db.query(WebDailyUsage).delete()
+    db.query(DeviceEvent).delete()
+    db.query(MonitoringSession).delete()
+    db.query(AccessHistoryLog).delete()
     db.commit()
     return {
         "status": "success",

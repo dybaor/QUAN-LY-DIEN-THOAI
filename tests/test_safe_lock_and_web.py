@@ -19,13 +19,22 @@ for p in [BASE_DIR, AGENT_DIR]:
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from agent.safe_browser import (
-    extract_domain,
-    is_domain_blocked,
-    render_blocked_html,
-    open_safe_browser
-)
-from agent.blocker import blocker
+try:
+    from agent.safe_browser import (
+        extract_domain,
+        is_domain_blocked,
+        render_blocked_html,
+        open_safe_browser
+    )
+    from agent.blocker import blocker
+except ImportError:
+    from safe_browser import (  # type: ignore
+        extract_domain,
+        is_domain_blocked,
+        render_blocked_html,
+        open_safe_browser
+    )
+    from blocker import blocker  # type: ignore
 
 
 class TestSafeLockAndWeb(unittest.TestCase):
@@ -114,7 +123,10 @@ class TestSafeLockAndWeb(unittest.TestCase):
 
     def test_proxy_web_endpoint_and_onboarding_elements(self):
         """Kiểm tra endpoint /proxy/web và các thành phần Onboarding Gate + Smooth Scrollbar."""
-        from starlette.requests import Request
+        try:
+            from starlette.requests import Request  # type: ignore
+        except ImportError:
+            Request = None  # type: ignore
         from server.app.main import proxy_web, serve_dashboard
 
         self.assertEqual(proxy_web("https://example.com").status_code, 403)

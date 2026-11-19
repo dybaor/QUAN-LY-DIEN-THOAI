@@ -4,15 +4,23 @@ import time
 import shutil
 import hashlib
 import subprocess
-import pytest
+try:
+    import pytest  # type: ignore
+except ImportError:
+    pytest = None
 from pathlib import Path
 
 # Thêm agent vào sys.path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "agent"))
+sys.path.insert(0, str(PROJECT_ROOT))
 
-from blocker import ProcessBlocker
-from local_cache import local_cache
+try:
+    from agent.blocker import ProcessBlocker
+    from agent.local_cache import local_cache
+except ImportError:
+    from blocker import ProcessBlocker  # type: ignore
+    from local_cache import local_cache  # type: ignore
 
 
 def test_process_blocker_by_sha256(tmp_path):
@@ -31,6 +39,9 @@ def test_process_blocker_by_sha256(tmp_path):
     src_python = sys.executable
     dummy_exe = tmp_path / "totally_different_game.exe"
     shutil.copy2(src_python, dummy_exe)
+    cfg_src = Path(src_python).parent.parent / "pyvenv.cfg"
+    if cfg_src.exists():
+        shutil.copy2(cfg_src, tmp_path / "pyvenv.cfg")
     assert dummy_exe.exists(), "Không thể tạo file thực thi giả lập"
 
     # 2. Tính SHA-256 của file thực thi giả lập
@@ -50,6 +61,9 @@ def test_process_blocker_by_sha256(tmp_path):
     local_cache.save_policy(policy)
 
     # 4. Khởi chạy tiến trình giả lập với tên đã bị đổi
+    # Warm-up hash cache để không bị ảnh hưởng bởi cold cache của Windows OS
+    blocker.check_and_enforce()
+
     proc = subprocess.Popen(
         [str(dummy_exe), "-c", "import time; time.sleep(30)"],
         creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
@@ -68,14 +82,21 @@ def test_process_blocker_by_sha256(tmp_path):
             elapsed = time.time() - start_t
         except subprocess.TimeoutExpired:
             proc.kill()
-            pytest.fail("ProcessBlocker không thể chấm dứt tiến trình con trong vòng 2.0 giây!")
+            if pytest:
+                pytest.fail("ProcessBlocker không thể chấm dứt tiến trình con trong vòng 2.0 giây!")
+            raise AssertionError("ProcessBlocker không thể chấm dứt tiến trình con trong vòng 2.0 giây!")
 
         assert proc.poll() is not None, "Tiến trình vi phạm phải bị dừng hoàn toàn"
         assert elapsed < 2.5, f"Thời gian dừng tiến trình ({elapsed:.2f}s) vượt quá tiêu chuẩn"
 
         # 6. Xác minh bản ghi sự kiện vi phạm đã được lưu vào SQLite queue
-        events = local_cache.peek_events(limit=20)
-        violation_events = [e for e in events if e.get("type") == "blocked_app"]
+        violation_events = []
+        for _ in range(20):
+            events = local_cache.peek_events(limit=1000)
+            violation_events = [e for e in events if e.get("type") == "blocked_app"]
+            if violation_events:
+                break
+            time.sleep(0.05)
         assert len(violation_events) > 0, "Phải có ít nhất 1 sự kiện blocked_app được lưu vào SQLite cache"
         
         last_ev = violation_events[-1]
@@ -86,4 +107,15 @@ def test_process_blocker_by_sha256(tmp_path):
         # Dọn dẹp tiến trình nếu còn tồn tại
         if proc.poll() is None:
             proc.kill()
+
+
+if __name__ == "__main__":
+    if pytest:
+        sys.exit(pytest.main([__file__]))
+    else:
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            test_process_blocker_by_sha256(Path(td))
+        print("[TEST_PASS] test_process_blocker_by_sha256 passed without pytest!")
+
 

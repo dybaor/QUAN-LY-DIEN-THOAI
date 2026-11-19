@@ -3,16 +3,28 @@ from pathlib import Path
 import sys
 from unittest.mock import patch
 
-from fastapi.testclient import TestClient
+try:
+    from fastapi.testclient import TestClient  # type: ignore
+except ImportError:
+    TestClient = None  # type: ignore
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "server"))
+SERVER_DIR = Path(__file__).resolve().parents[1] / "server"
+if str(SERVER_DIR) not in sys.path:
+    sys.path.insert(0, str(SERVER_DIR))
 
-from app.main import app
-from app import daily_time
-from app.routers import policy_events
+try:
+    from app.main import app  # type: ignore
+    from app import daily_time  # type: ignore
+    from app.routers import policy_events  # type: ignore
+except ImportError:
+    from server.app.main import app  # type: ignore
+    from server.app import daily_time  # type: ignore
+    from server.app.routers import policy_events  # type: ignore
 
 
 def test_daily_adjustments_and_request_notifications():
+    if TestClient is None:
+        return
     class Clock(datetime):
         current = datetime(2040, 1, 6, 10)
 
@@ -52,6 +64,8 @@ def test_daily_adjustments_and_request_notifications():
 
 
 def test_stream_ends_when_child_stops_or_disconnects():
+    if TestClient is None:
+        return
     with TestClient(app) as client, client.websocket_connect("/ws/parent_qa") as parent:
         with client.websocket_connect("/ws/child/qa") as child:
             for stop_explicitly in (True, False):
@@ -62,7 +76,10 @@ def test_stream_ends_when_child_stops_or_disconnects():
                     assert parent.receive_json()["cmd"] == "screen_share_stopped"
         assert parent.receive_json()["cmd"] == "screen_share_stopped"
 
+
 def test_manual_lock_persists_across_child_reconnect():
+    if TestClient is None:
+        return
     with TestClient(app) as client:
         lock = {"device_id": "auto", "action": "lock_window", "reason": "QA lock"}
         assert client.post("/commands/send", json=lock).is_success

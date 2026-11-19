@@ -10,8 +10,15 @@ import ctypes
 import os
 import time
 from typing import Optional, Tuple
-import psutil
-from local_cache import local_cache
+try:
+    import psutil  # type: ignore
+except ImportError:
+    psutil = None  # type: ignore
+
+try:
+    from agent.local_cache import local_cache
+except ImportError:
+    from local_cache import local_cache  # type: ignore
 
 
 class LASTINPUTINFO(ctypes.Structure):

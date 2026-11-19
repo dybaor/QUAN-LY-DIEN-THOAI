@@ -31,6 +31,12 @@ if errorlevel 1 (
     if errorlevel 1 goto :install_failed
 )
 
+echo %* | findstr /i "\--clean" >nul
+if not errorlevel 1 (
+    echo Dang reset co so du lieu ve trang thai sach...
+    "%PYTHON%" "%~dp0..\reset_database.py"
+)
+
 "%PYTHON%" -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=1)" >nul 2>nul
 if errorlevel 1 (
     echo Dang khoi dong server...
@@ -41,7 +47,8 @@ if errorlevel 1 (
     echo Server da chay san.
 )
 
-if /i "%~1"=="--server-only" exit /b 0
+echo %* | findstr /i "\--server-only" >nul
+if not errorlevel 1 exit /b 0
 
 start "" "http://127.0.0.1:8000/"
 start "" "http://127.0.0.1:8000/child"

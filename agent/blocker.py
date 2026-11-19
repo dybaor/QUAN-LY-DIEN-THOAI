@@ -15,15 +15,23 @@ import os
 import threading
 import time
 from typing import Dict, Optional, Set, Tuple
-import psutil
-from local_cache import local_cache
+try:
+    import psutil  # type: ignore
+except ImportError:
+    psutil = None  # type: ignore
+
+try:
+    from agent.local_cache import local_cache
+except ImportError:
+    from local_cache import local_cache  # type: ignore
 
 
 class ProcessBlocker:
     """Module kiểm soát và cưỡng chế ứng dụng theo mã băm SHA-256."""
 
+    _hash_cache: Dict[Tuple[str, float, int], str] = {}
+
     def __init__(self):
-        self._hash_cache: Dict[Tuple[str, float, int], str] = {}
         self._user32 = ctypes.windll.user32
         self._kernel32 = ctypes.windll.kernel32
         self._wts = ctypes.windll.wtsapi32
@@ -78,8 +86,8 @@ class ProcessBlocker:
                     duration_sec=0,
                     policy_id=policy_id,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[BG_ERROR] {e}")
         threading.Thread(target=_bg, daemon=True).start()
 
     def lock_workstation(self, reason: str = "Hết hạn mức hoặc có lệnh từ phụ huynh") -> bool:

@@ -25,7 +25,10 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 if CURRENT_DIR not in sys.path:
     sys.path.insert(0, CURRENT_DIR)
 
-from local_cache import local_cache
+try:
+    from agent.local_cache import local_cache
+except ImportError:
+    from local_cache import local_cache  # type: ignore
 
 # Danh mục tên miền mặc định cần chặn nếu cha mẹ cấu hình hoặc trong blocklist
 DEFAULT_BLOCKED_KEYWORDS = [
@@ -226,7 +229,7 @@ class InAppSafeBrowserWindow:
 
         # 1. Thử dùng pywebview nếu có
         try:
-            import webview
+            import webview  # type: ignore
 
             if is_blocked:
                 html_content = render_blocked_html(self.target_url, domain, reason)

@@ -22,20 +22,40 @@ for p in [str(BASE_DIR), str(SERVER_DIR)]:
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from app.database import SessionLocal
-from app.models import Policy
-from app.routers.policy_events import verify_pin, VerifyPinSchema
-from app.main import app
+try:
+    from server.app.database import SessionLocal
+    from server.app.models import Policy
+    from server.app.routers.policy_events import (
+        verify_pin, VerifyPinSchema, reset_system_state,
+        start_monitoring_session, stop_monitoring_session, get_monitoring_history,
+        MonitoringStartSchema, MonitoringStopSchema,
+        create_access_log, get_access_history, AccessLogCreateSchema,
+        get_auth_settings
+    )
+    from server.app.websocket_manager import manager
+    from server.app.main import app
+except ImportError:
+    from app.database import SessionLocal  # type: ignore
+    from app.models import Policy  # type: ignore
+    from app.routers.policy_events import (  # type: ignore
+        verify_pin, VerifyPinSchema, reset_system_state,
+        start_monitoring_session, stop_monitoring_session, get_monitoring_history,
+        MonitoringStartSchema, MonitoringStopSchema,
+        create_access_log, get_access_history, AccessLogCreateSchema,
+        get_auth_settings
+    )
+    from app.websocket_manager import manager  # type: ignore
+    from app.main import app  # type: ignore
 
 
 class TestSafetyAndUI(unittest.TestCase):
 
     def setUp(self):
-        from app.websocket_manager import manager
         manager.active_connections.clear()
         self.db = SessionLocal()
 
     def tearDown(self):
+        reset_system_state(db=self.db)
         self.db.close()
 
     # =========================================================================
@@ -198,8 +218,6 @@ class TestSafetyAndUI(unittest.TestCase):
         - API Get monitoring history
         - Bảng Lịch sử quan sát màn hình trên dashboard
         """
-        from app.routers.policy_events import start_monitoring_session, stop_monitoring_session, get_monitoring_history, MonitoringStartSchema, MonitoringStopSchema
-
         # 1. Bắt đầu phiên
         start_res = start_monitoring_session(MonitoringStartSchema(child_id=1, device_id="TEST-PC"), db=self.db)
         self.assertEqual(start_res["status"], "success")
@@ -231,8 +249,6 @@ class TestSafetyAndUI(unittest.TestCase):
         - API lấy danh sách access history
         - Bảng Nhật ký truy cập thiết bị trên dashboard
         """
-        from app.routers.policy_events import create_access_log, get_access_history, AccessLogCreateSchema
-
         # Ghi log hợp lệ
         log1 = create_access_log(AccessLogCreateSchema(
             child_id=1, device_id="TEST-PC", target_name="Khan Academy", target_type="Trang web", status="allowed"
@@ -266,8 +282,6 @@ class TestSafetyAndUI(unittest.TestCase):
         - Cấu hình lần đầu chuyển sang Case B (is_initialized = True)
         - Clean state reset đưa về Case A sạch sẽ
         """
-        from app.routers.policy_events import get_auth_settings, reset_system_state
-
         # 1. Reset về trạng thái sạch (Case A)
         res_reset = reset_system_state(db=self.db)
         self.assertEqual(res_reset["status"], "success")

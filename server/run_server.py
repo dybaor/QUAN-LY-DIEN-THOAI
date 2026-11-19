@@ -18,8 +18,18 @@ if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
         sys.path.insert(0, sys._MEIPASS)
 
 from app.main import app
+from app.database import SessionLocal
+from app.routers.policy_events import reset_system_state
 
 def main():
+    if "--clean" in sys.argv:
+        db = SessionLocal()
+        try:
+            reset_system_state(db)
+            print("[INFO] Đã reset cơ sở dữ liệu về trạng thái sạch hoàn toàn (--clean).")
+        finally:
+            db.close()
+
     print("=" * 65)
     print("  OGK SERVER - MÁY CHỦ BẢO VỆ THIẾT BỊ TRẺ EM")
     print("  Dashboard Quản trị: http://127.0.0.1:8000")

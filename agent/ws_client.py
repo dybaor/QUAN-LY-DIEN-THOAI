@@ -11,10 +11,19 @@ import json
 import threading
 import time
 from typing import Any, Dict, List, Optional
-import requests
-import websockets
-from blocker import blocker
-from local_cache import local_cache
+try:
+    import requests  # type: ignore
+    import websockets  # type: ignore
+except ImportError:
+    requests = None  # type: ignore
+    websockets = None  # type: ignore
+
+try:
+    from agent.blocker import blocker
+    from agent.local_cache import local_cache
+except ImportError:
+    from blocker import blocker  # type: ignore
+    from local_cache import local_cache  # type: ignore
 
 
 class AgentNetworkClient:

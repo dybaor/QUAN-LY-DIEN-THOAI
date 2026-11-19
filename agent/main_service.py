@@ -20,14 +20,25 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 if CURRENT_DIR not in sys.path:
     sys.path.insert(0, CURRENT_DIR)
 
-import win32event
-import win32service
-import win32serviceutil
+try:
+    import win32event  # type: ignore
+    import win32service  # type: ignore
+    import win32serviceutil  # type: ignore
+except ImportError:
+    win32event = None  # type: ignore
+    win32service = None  # type: ignore
+    win32serviceutil = None  # type: ignore
 
-from blocker import blocker
-from local_cache import local_cache, flush_events_if_online
-from tracker import tracker
-from ws_client import ws_client
+try:
+    from agent.blocker import blocker
+    from agent.local_cache import local_cache, flush_events_if_online
+    from agent.tracker import tracker
+    from agent.ws_client import ws_client
+except ImportError:
+    from blocker import blocker  # type: ignore
+    from local_cache import local_cache, flush_events_if_online  # type: ignore
+    from tracker import tracker  # type: ignore
+    from ws_client import ws_client  # type: ignore
 
 
 class OGKChildAgentService(win32serviceutil.ServiceFramework):

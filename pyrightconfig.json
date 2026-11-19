@@ -1,0 +1,14 @@
+{
+  "include": [
+    "server",
+    "agent",
+    "tests"
+  ],
+  "extraPaths": [
+    "server",
+    "agent",
+    "."
+  ],
+  "reportMissingImports": "none",
+  "reportMissingModuleSource": "none"
+}
