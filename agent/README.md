@@ -1,48 +1,51 @@
-# OGK AGENT - CLIENT GIÁM SÁT MÁY CON (HEADLESS DAEMON)
+# OGK AGENT — WINDOWS SERVICE + BIỂU TƯỢNG KHAY HỆ THỐNG
 
-Module chạy ngầm dưới quyền `LocalSystem` trên máy tính của trẻ, phụ trách giám sát tiến trình, đo đếm thời gian sử dụng thiết bị và thực thi chính sách bảo vệ cục bộ ngay cả khi mất kết nối mạng.
+Agent gồm hai tiến trình:
 
----
+- **`main_service.py`**: Windows Service `OGKChildAgent` (LocalSystem, tự khởi động lại sau 5 giây). Service đếm giờ, chặn ứng dụng, thực thi hạn mức và lịch, đồng bộ với máy chủ.
+- **`tray_ui.py`**: biểu tượng khay chạy trong phiên đăng nhập của trẻ. Khay chỉ gửi trạng thái phiên (nhàn rỗi, ứng dụng đang dùng, màn hình khóa) cho Service qua named pipe `\\.\pipe\OGKAgentUI`, hiển thị thời gian còn lại ở tooltip và có mục mở Cổng học tập.
 
-## 1. CÁC TÍNH NĂNG KỸ THUẬT CỐT LÕI
+**Nguyên tắc: Agent không đụng vào Windows.** Không `LockWorkStation`, không hộp thoại/popup, không tắt máy. Agent chỉ chặn tiến trình bị cấm và **ghi sự kiện**; mọi thứ trẻ nhìn thấy (khóa, cảnh báo, lý do chặn) nằm trong Cổng học tập (overlay web), do máy chủ quyết định theo hạn mức, lịch tuần và lệnh của phụ huynh.
 
-- **Nhận diện và Chặn Ứng Dụng bằng Mã Băm SHA-256 (`blocker.py`):**
-  - Quét danh sách tiến trình chạy trên hệ thống qua `psutil`.
-  - Tính toán mã băm SHA-256 của file thực thi (`.exe`), vô hiệu hóa mọi thủ thuật đổi tên file để qua mặt hệ thống.
-  - Tiêu diệt tiến trình bị cấm trong vòng dưới 2 giây.
-- **Bộ Đếm Thời Gian Monotonic & Chống Gian Lận Giờ (`tracker.py`):**
-  - Sử dụng hàm `time.monotonic()` độc lập hoàn toàn với đồng hồ hệ thống Windows.
-  - Tự động phát hiện thủ thuật lùi giờ (`clock_tamper`) nếu người dùng chỉnh thời gian máy tính về quá khứ.
-  - Nhận diện trạng thái nhàn rỗi (`Idle Detection` qua API `GetLastInputInfo`) để dừng tính giờ khi trẻ rời khỏi máy tính.
-- **Bộ Nhớ Đệm SQLite Cục Bộ Chế Độ WAL (`local_cache.py`):**
-  - Lưu trữ bản sao chính sách gần nhất (`ogk_cache.db`).
-  - Hàng đợi sự kiện offline (`offline_events`): Lưu lại các vi phạm khi mất mạng và tự động đồng bộ lên Server ngay khi có kết nối trở lại.
-- **Kênh Giao Tiếp WebSocket Thời Gian Thực (`ws_client.py`):**
-  - Duy trì kết nối hai chiều với Server, phản hồi lệnh khóa/mở khóa từ phụ huynh trong thời gian < 1 giây.
-- **Triệt tiêu 100% Thông báo Hệ điều hành:**
-  - Tuyệt đối không bật hộp thoại ngoài desktop (`WTSSendMessageW`, `ctypes MessageBox`), toàn bộ thông báo cảnh báo đều chuyển thành WebSocket Toast hiển thị nội bộ trong Web Portal của trẻ.
+## Tính năng
 
----
+| Mã | Mô tả | File |
+| --- | --- | --- |
+| KT-2 | Ghép đôi bằng mã 8 ký tự + fingerprint (MachineGuid), nhận device_id, token, khóa ký | `enrollment.py` |
+| KT-3 | Heartbeat 60 giây gửi `quota_used`, nhận `server_time` | `ws_client.py` |
+| KT-4 | WebSocket `/ws/agent` (Bearer token): khóa ngay, mở khóa, +giờ, xóa cache | `ws_client.py`, `main_service.py` |
+| KT-5 | Cache SQLite WAL, hàng đợi sự kiện có `idempotency_key`, chạy được khi mất mạng | `local_cache.py` |
+| F1-2/F1-4 | Lịch 7×48 khung 30 phút (máy chủ thực thi bằng overlay web), cảnh báo 10/5/1 phút và ân hạn 60 giây: Agent ghi `quota_warning` / `locked` | `enforcer.py` |
+| F1-3/F1-5 | Không đếm khi màn hình khóa hoặc nhàn rỗi > 5 phút; phát hiện chỉnh đồng hồ bằng monotonic và giờ máy chủ | `tracker.py` |
+| F2-1/F2-2 | Chặn ứng dụng theo SHA-256 (chỉ băm file đúng kích thước nên dừng < 1 giây), ghi `blocked_app`; máy chủ báo lý do cho trẻ trong Cổng học tập | `blocker.py` |
+| F4-2 | Chỉ nạp chính sách có chữ ký HMAC-SHA256 hợp lệ, từ chối bản cũ hơn | `ws_client.py` |
+| F5-3 | TLS 1.2+, ghim chứng chỉ (`OGK_CERT_SHA256`), refresh token xoay vòng | `transport.py` |
+| F5-4 | Token và khóa ký mã hóa AES-256-GCM; khóa AES bảo vệ bằng DPAPI | `secure_store.py` |
+| F5-6 | Không thấy khay hệ thống quá 2 phút thì tạm dừng giám sát và báo phụ huynh | `ui_bridge.py`, `main_service.py` |
+| F4-MR1 | Gỡ cài đặt bắt buộc có tài khoản phụ huynh, ghi log | `uninstall_agent.py` |
 
-## 2. HƯỚNG DẪN KHỞI CHẠY VÀ VẬN HÀNH
+## Cấu hình
 
-### Chế độ 1: Chạy Debug Trực Tiếp Trên Terminal (Khuyên dùng khi phát triển & demo)
+Đặt bằng biến môi trường hoặc trong `%ProgramData%\OGKAgent\agent_config.json`:
+
+| Biến | Ý nghĩa |
+| --- | --- |
+| `OGK_SERVER_URL` | Địa chỉ máy chủ. Mặc định `http://127.0.0.1:8000`; bắt buộc `https://` nếu không phải máy này |
+| `OGK_CERT_SHA256` | Vân tay SHA-256 của chứng chỉ máy chủ để ghim chứng chỉ |
+| `OGK_CA_BUNDLE` | File CA riêng (tùy chọn) |
+
+## Sử dụng
+
 ```powershell
-python agent/main_service.py debug
-```
-Lệnh này sẽ khởi động vòng lặp giám sát của Agent ngay trên cửa sổ console, hiển thị trực quan log kiểm tra tiến trình và đồng bộ thời gian thực.
-
-### Chế độ 2: Cài Đặt Làm Dịch Vụ Windows Service (Production)
-Yêu cầu mở PowerShell hoặc Command Prompt bằng **Run as Administrator**:
-```powershell
-# 1. Cài đặt và kích hoạt dịch vụ tự khởi động cùng Windows
-cd agent
-.\install_service.bat
-
-# 2. Kiểm tra trạng thái dịch vụ
-sc query OGKChildAgent
-
-# 3. Gỡ bỏ dịch vụ khi cần
-.\uninstall_service.bat
+pip install -r agent/requirements.txt
+python agent/main_service.py enroll ABCD1234   # mã tạo trên Dashboard > Thiết bị của trẻ
+python agent/main_service.py debug              # chạy trực tiếp kèm biểu tượng khay (hoặc Start_App.bat --with-agent)
+python agent/main_service.py status
 ```
 
+Cài làm Windows Service (Run as Administrator):
+
+```powershell
+.\agent\install_service.bat     # nhập mã ghép đôi, cài service và biểu tượng khay
+.\agent\uninstall_service.bat   # yêu cầu tài khoản phụ huynh
+```

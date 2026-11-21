@@ -40,9 +40,17 @@
         <h2 class="text-2xl md:text-3xl font-black text-white tracking-tight mb-3">
             Đang kết nối với phụ huynh...
         </h2>
-        <p class="text-slate-400 text-sm md:text-base max-w-md leading-relaxed mb-8">
+        <p id="waitingScreenText" class="text-slate-400 text-sm md:text-base max-w-md leading-relaxed mb-8">
             Hệ thống đang được thiết lập. Vui lòng chờ ba mẹ hoàn tất cài đặt trong giây lát...
         </p>
+
+        <form id="pairingForm" hidden class="w-full max-w-sm space-y-3 mb-8" onsubmit="event.preventDefault(); submitPairingCode()">
+            <label for="pairingCodeInput" class="block text-sm text-slate-300">Nhập mã ghép đôi 8 ký tự ba mẹ tạo trên Dashboard</label>
+            <input id="pairingCodeInput" maxlength="8" autocomplete="off" spellcheck="false"
+                class="w-full text-center tracking-[0.4em] uppercase font-black text-2xl bg-slate-900 border border-cyan-500/40 rounded-2xl py-3 text-white">
+            <button type="submit" class="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-2.5 rounded-xl">Kết nối với ba mẹ</button>
+            <p id="pairingError" class="text-rose-400 text-xs font-bold" hidden></p>
+        </form>
 
         <!-- Animated Loading Bar -->
         <div class="w-64 bg-slate-900 h-2 rounded-full overflow-hidden border border-slate-800 p-0.5">
@@ -89,6 +97,13 @@
                     </div>
                 </div>
 
+                <button onclick="openTodayActivityModal()" class="bg-slate-800/80 hover:bg-slate-700 border border-slate-700 text-white font-bold py-2.5 px-3 rounded-xl text-sm">
+                    📋 Hôm nay em đã dùng gì
+                </button>
+                <button onclick="openAuditLogModal()" class="bg-slate-800/80 hover:bg-slate-700 border border-slate-700 text-white font-bold py-2.5 px-3 rounded-xl text-sm">
+                    📜 Ba mẹ đã thay đổi gì
+                </button>
+
                 <!-- Nút xin thêm giờ -->
                 <button onclick="openRequestTimeModal()" class="bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 active:scale-95 text-white font-bold py-2.5 px-4 rounded-xl shadow-lg shadow-amber-500/20 transition flex items-center space-x-2 text-sm">
                     <span>🙋‍♂️</span>
@@ -103,6 +118,14 @@
     <main class="max-w-7xl mx-auto px-6 pt-8 space-y-8">
 
         <section id="todayTimeline" class="ogk-timeline ogk-timeline-child" aria-label="Lịch hôm nay" hidden></section>
+
+        <div id="graceBanner" hidden role="alert"
+            class="fixed top-4 left-1/2 -translate-x-1/2 z-[99990] bg-rose-600 text-white font-bold px-6 py-3 rounded-2xl shadow-2xl text-sm">
+            ⏰ Hết giờ rồi! Máy sẽ khóa sau <span id="graceSeconds">60</span> giây — em lưu bài ngay nhé.
+        </div>
+        <div id="pauseBanner" hidden class="bg-sky-900/60 border border-sky-500/40 text-sky-100 rounded-2xl px-4 py-2 text-sm">
+            ⏸️ Ba mẹ đang cho em tạm nghỉ giới hạn — thời gian lúc này không bị tính.
+        </div>
 
         <!-- Banner Lời Chào & Thanh tìm kiếm ứng dụng thông minh -->
         <section class="child-discovery glass-panel p-6 md:p-8">
@@ -139,17 +162,19 @@
                         title="Xóa tìm kiếm"
                     >✕</button>
                 </div>
+                <p id="searchSafetyHint" class="mt-2 text-xs text-slate-400">
+                    🛡️ SafeSearch luôn bật. Từ khóa không phù hợp sẽ bị chặn và ba mẹ sẽ được báo ngay.
+                </p>
             </div>
 
         </section>
 
         <!-- Lưới ứng dụng (Smart Mobile App Grid) -->
-        <section>
+        <section id="appsSection" hidden>
             <div class="flex items-center justify-between mb-4">
                 <h3 class="text-sm font-bold uppercase tracking-wider text-slate-400">
-                    Google Tìm kiếm
+                    Ứng dụng của con
                 </h3>
-                <span class="text-xs text-slate-500">SafeSearch</span>
             </div>
 
             <div id="appGrid" class="app-grid">
@@ -257,6 +282,43 @@
     <!-- ========================================================================= -->
     <!-- 3. MODAL XIN THÊM THỜI GIAN (TIME EXTENSION REQUEST)                      -->
     <!-- ========================================================================= -->
+
+    <!-- MÀN HÌNH MINH BẠCH: HÔM NAY EM ĐÃ DÙNG GÌ -->
+    <div id="todayActivityModal" class="fixed inset-0 z-[88888] bg-slate-950/80 backdrop-blur-md hidden items-center justify-center p-4">
+        <div class="glass-panel max-w-lg w-full p-6 space-y-4 max-h-[85vh] overflow-y-auto relative">
+            <button onclick="closeTodayActivityModal()" class="absolute top-4 right-4 text-slate-300 bg-slate-800 w-8 h-8 rounded-full" title="Đóng (Esc)">✕</button>
+            <h3 class="text-xl font-black text-white">📋 Hôm nay em đã dùng gì</h3>
+            <p id="todaySummaryText" class="text-slate-300 text-sm">Đang tải…</p>
+            <div>
+                <h4 class="text-xs uppercase tracking-wider text-slate-400 font-bold mb-2">Ứng dụng</h4>
+                <ul id="todayAppsList" class="space-y-1.5 text-sm"></ul>
+            </div>
+            <div>
+                <h4 class="text-xs uppercase tracking-wider text-slate-400 font-bold mb-2">Trang web</h4>
+                <ul id="todayWebsitesList" class="space-y-1.5 text-sm"></ul>
+            </div>
+            <p class="text-[11px] text-slate-500">OGK chỉ ghi tên ứng dụng và tên trang web, không ghi nội dung em xem hay gõ.</p>
+        </div>
+    </div>
+
+    <!-- NHẬT KÝ THAY ĐỔI CỦA BA MẸ (NT5) -->
+    <div id="auditLogModal" class="fixed inset-0 z-[88888] bg-slate-950/80 backdrop-blur-md hidden items-center justify-center p-4">
+        <div class="glass-panel max-w-lg w-full p-6 space-y-4 max-h-[85vh] overflow-y-auto relative">
+            <button onclick="closeAuditLogModal()" class="absolute top-4 right-4 text-slate-300 bg-slate-800 w-8 h-8 rounded-full" title="Đóng (Esc)">✕</button>
+            <h3 class="text-xl font-black text-white">📜 Ba mẹ đã thay đổi gì</h3>
+            <ul id="childAuditList" class="space-y-2 text-sm"></ul>
+        </div>
+    </div>
+
+    <!-- NHẮC NGHỈ MẮT 20-20-20 -->
+    <div id="eyeBreakModal" class="fixed inset-0 z-[88888] bg-slate-950/70 backdrop-blur-sm hidden items-center justify-center p-4">
+        <div class="glass-panel max-w-sm w-full p-6 text-center space-y-3">
+            <div class="text-5xl">👀</div>
+            <h3 class="text-lg font-black text-white">Nghỉ mắt một chút nhé!</h3>
+            <p class="text-slate-300 text-sm">Em đã nhìn màn hình 20 phút. Hãy nhìn một vật cách xa khoảng 6 mét trong <span id="eyeBreakSeconds">20</span> giây.</p>
+            <button onclick="closeEyeBreakModal()" class="bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-2 px-5 rounded-xl text-sm">Em đã nghỉ xong</button>
+        </div>
+    </div>
     <div id="requestTimeModal" class="fixed inset-0 z-[88888] bg-slate-950/80 backdrop-blur-md hidden items-center justify-center p-4">
         <div class="bg-slate-900 border border-slate-700 p-6 rounded-2xl max-w-md w-full shadow-2xl">
             <div class="flex justify-between items-center mb-4">
@@ -356,9 +418,6 @@
 
         <!-- Thanh gợi ý tin nhắn nhanh -->
         <div class="ogk-chat-quick flex flex-wrap gap-1">
-            <button onclick="sendQuickChildMsg('Ba mẹ ơi mở cho con 15 phút làm bài tập với ạ!')" class="ogk-chat-chip">
-                🙋‍♂️ Xin mở 15p
-            </button>
             <button onclick="sendQuickChildMsg('Con đã làm xong bài tập rồi ba mẹ ơi!')" class="ogk-chat-chip">
                 ✅ Đã xong bài
             </button>

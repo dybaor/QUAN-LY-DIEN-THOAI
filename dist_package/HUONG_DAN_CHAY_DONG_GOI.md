@@ -24,9 +24,9 @@ Thư mục phát hành `dist_package/` và file nén `dist/OGK_Deploy_Package_x6
 | **`agent_service.exe`** | Binary (.exe) | Dịch vụ Windows Service chạy ngầm LocalSystem, đo thời gian (M6), chặn app SHA-256 |
 | **`dns_proxy.exe`** | Binary (.exe) | Máy chủ DNS Proxy cục bộ lọc web đen, sinkhole 0.0.0.0, cưỡng chế SafeSearch & DoH Canary |
 | **`blocklist.json`** | Dữ liệu (JSON) | Danh bạ hơn 6 nhóm tên miền cấm (Porn, Gambling, Social, Gaming, Malware, DoH) |
-| **`install_service.bat`** | Kịch bản (Batch) | **1-Click**: Tự kiểm tra Admin, tạo thư mục `%ProgramData%`, đăng ký service + tự restart 5s (M5) |
-| **`start_proxy.bat`** | Kịch bản (Batch) | **1-Click**: Khởi chạy máy chủ DNS Proxy lắng nghe cổng UDP 53 dưới quyền Administrator |
-| **`uninstall_service.bat`**| Kịch bản (Batch) | **1-Click**: Dừng tiến trình và gỡ sạch sẽ dịch vụ khỏi Windows Service Manager |
+| **`Start_App.bat`** | Kịch bản (Batch) | Launcher duy nhất: bật máy chủ, `--with-agent`, `--with-dns` (Admin), `--reset`, `--stop` |
+| **`install_service.bat`** | Kịch bản (Batch) | Kiểm tra Admin, nhập mã ghép đôi, đăng ký service + tự restart 5s (M5), đăng ký khay hệ thống |
+| **`uninstall_service.bat`**| Kịch bản (Batch) | Gỡ cài đặt sau khi xác thực tài khoản phụ huynh (có audit log) |
 | **`SHA256SUMS.txt`** | Checksum | Mã băm SHA-256 của từng file giúp kiểm tra tính toàn vẹn khi sao chép |
 | **`HUONG_DAN_CAI_DAT.txt`**| Tài liệu (Text) | Hướng dẫn nhanh tại chỗ (Quick-start guide dưới 5 phút) |
 
@@ -90,7 +90,7 @@ Khi muốn gỡ hoàn toàn dịch vụ:
 DNS Proxy có nhiệm vụ chặn các trang web cấm ngay từ tầng mạng (Network Layer) trước khi gói tin HTTP/HTTPS được thiết lập.
 
 ### A. Khởi chạy máy chủ DNS Proxy
-1. Click chuột phải vào file **`start_proxy.bat`** -> Chọn **"Run as administrator"**.
+1. Mở Command Prompt bằng **"Run as administrator"** trong thư mục gói và chạy `Start_App.bat --with-dns`.
    > *Lưu ý: Mở cổng UDP 53 trên hệ điều hành Windows bắt buộc phải có quyền Administrator.*
 2. Cửa sổ dòng lệnh sẽ xuất hiện thông báo:
    ```text

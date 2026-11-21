@@ -21,6 +21,8 @@ venv/
 .vscode/
 
 # Local runtime data
+ogk_secrets.json
+.ogk_server.log
 ogk_agent_data/
 *.log
 .DS_Store

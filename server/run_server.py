@@ -17,17 +17,32 @@ if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
     if sys._MEIPASS not in sys.path:
         sys.path.insert(0, sys._MEIPASS)
 
+for _stream in (sys.stdout, sys.stderr):
+    if _stream and hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")  # Banner tiếng Việt khi ghi log ra file
+
 from app.main import app
 
 def main():
+    host = os.environ.get("OGK_HOST", "127.0.0.1")
+    port = int(os.environ.get("OGK_PORT", "8000"))
+    certfile = os.environ.get("OGK_SSL_CERTFILE")
+    keyfile = os.environ.get("OGK_SSL_KEYFILE")
+    scheme = "https" if certfile else "http"
+    if host not in ("127.0.0.1", "localhost") and not certfile:
+        sys.exit("Từ chối chạy trên mạng không có TLS. Hãy đặt OGK_SSL_CERTFILE và OGK_SSL_KEYFILE.")
     print("=" * 65)
     print("  OGK SERVER - MÁY CHỦ BẢO VỆ THIẾT BỊ TRẺ EM")
-    print("  Dashboard Quản trị: http://127.0.0.1:8000")
+    print(f"  Dashboard Quản trị: {scheme}://{host}:{port}")
     print("  Nhấn Ctrl + C để dừng máy chủ an toàn.")
     print("=" * 65)
+    tls = {}
+    if certfile:
+        import ssl
+        tls = {"ssl_certfile": certfile, "ssl_keyfile": keyfile, "ssl_version": ssl.PROTOCOL_TLS_SERVER}
     uvicorn.run(
-        app, host="127.0.0.1", port=8000, log_level="info",
-        ws="websockets-sansio", ws_ping_interval=5, ws_ping_timeout=5,
+        app, host=host, port=port, log_level="info",
+        ws="websockets-sansio", ws_ping_interval=5, ws_ping_timeout=5, **tls,
     )
 
 if __name__ == "__main__":

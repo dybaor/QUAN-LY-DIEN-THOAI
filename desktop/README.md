@@ -3,10 +3,10 @@
 Hai ứng dụng dùng chung backend OGK. Để chạy thử trên cùng máy, mở Command Prompt ở thư mục dự án và chạy:
 
 ```bat
-server\Start_App.bat --server-only
+Start_App.bat --server-only
 ```
 
-Khi server chạy tại `127.0.0.1:8000`, mở `OGKParent.exe` cho phụ huynh và `OGKChild.exe` cho trẻ. Mỗi file EXE cần các file runtime đi kèm trong thư mục của nó. Ứng dụng trẻ mở toàn màn hình. Google mở trong cửa sổ OGK riêng, chỉ cho phép trang kết quả tìm kiếm với SafeSearch, chặn mở website từ kết quả và không cho tải tệp.
+Khi server chạy tại `127.0.0.1:8000`, mở `OGKParent.exe` cho phụ huynh và `OGKChild.exe` cho trẻ. Mỗi file EXE cần các file runtime đi kèm trong thư mục của nó. Ứng dụng trẻ mở toàn màn hình và cần ghép đôi bằng mã 8 ký tự tạo trên Dashboard (mục "Thiết bị của trẻ"). Google mở trong cửa sổ OGK riêng, chỉ cho phép trang kết quả tìm kiếm với SafeSearch, chặn mở website từ kết quả và không cho tải tệp.
 
 ## Tạo hai bản Windows x64
 

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Unit test kiểm chứng:
-1. Cơ chế khóa cô lập trong cửa sổ (In-App Lock Overlay) TUYỆT ĐỐI không gọi LockWorkStation của Windows.
+1. Agent KHÔNG khóa Windows và không mở popup hệ điều hành: chỉ ghi sự kiện `locked` (khóa là overlay web).
 2. Cơ chế chặn tên miền (Domain Interception) trong Safe Browser nội bộ, không rò rỉ ra webbrowser ngoài.
 3. Trừ giờ thời gian thực và tự động khóa khi hết hạn mức.
 """
@@ -71,11 +71,15 @@ class TestSafeLockAndWeb(unittest.TestCase):
             self.assertIn("TRANG WEB ĐÃ BỊ HẠN CHẾ", html)
             self.assertIn("youtube.com", html)
 
-    def test_blocker_lock_workstation_does_not_call_user32_lock(self):
-        """Kiểm tra blocker.lock_workstation không gọi ctypes.windll.user32.LockWorkStation."""
-        with patch("ctypes.windll.user32.LockWorkStation", side_effect=AssertionError("LockWorkStation must NOT be called!")):
-            res = blocker.lock_workstation("Lệnh thử nghiệm từ phụ huynh")
-            self.assertTrue(res, "Hàm phải trả về True sau khi ghi log sự kiện")
+    def test_blocker_enforce_lock_records_event_without_touching_windows(self):
+        """Khóa chỉ ghi sự kiện `locked`; không gọi LockWorkStation / MessageBox / ExitWindows."""
+        from agent.local_cache import local_cache
+        before = len([e for e in local_cache.peek_events(500) if e["type"] == "locked"])
+        with patch("ctypes.windll.user32.LockWorkStation", side_effect=AssertionError("Không được khóa Windows")),              patch("ctypes.windll.user32.MessageBoxW", side_effect=AssertionError("Không được mở hộp thoại")):
+            self.assertTrue(blocker.enforce_lock("Lệnh thử nghiệm từ phụ huynh"))
+        events = [e for e in local_cache.peek_events(500) if e["type"] == "locked"]
+        self.assertEqual(len(events), before + 1)
+        self.assertEqual(events[-1]["subject"], "Lệnh thử nghiệm từ phụ huynh")
 
     def test_agent_service_initialization_no_index_error(self):
         """Kiểm tra khởi tạo Agent Service với args=None hoặc args=[] không bị lỗi IndexError list index out of range."""
@@ -147,7 +151,7 @@ class TestSafeLockAndWeb(unittest.TestCase):
         self.assertIn('toBlob', content)
         self.assertIn('image/jpeg', content)
         self.assertIn('800', content)
-        self.assertIn('init_completed', content)
+        self.assertIn('submitPairingCode', content)
         self.assertIn('checkInitializationStatus', content)
 
     def test_zero_hardcoded_pin_and_neutral_placeholder(self):
@@ -160,7 +164,7 @@ class TestSafeLockAndWeb(unittest.TestCase):
         self.assertNotIn('pin === "1234"', child_js)
         self.assertNotIn("pin === '0000'", child_js)
         self.assertNotIn('pin === "0000"', child_js)
-        self.assertIn('configuredParentPin = ""', child_js)
+        self.assertNotIn('lock_pin', child_js)
 
         child_portal_path = os.path.join(BASE_DIR, "server", "templates", "child_portal.html")
         with open(child_portal_path, "r", encoding="utf-8") as f:
@@ -195,8 +199,8 @@ class TestSafeLockAndWeb(unittest.TestCase):
         self.assertIn('violation_alert', child_js)
         self.assertIn('chat_message', child_js)
 
-        # 3. Kiểm tra Dashboard Phụ huynh (dashboard.html & index.html)
-        for filename in ["dashboard.html", "index.html"]:
+        # 3. Kiểm tra Dashboard Phụ huynh (dashboard.html)
+        for filename in ["dashboard.html"]:
             tmpl_path = os.path.join(BASE_DIR, "server", "templates", filename)
             with open(tmpl_path, "r", encoding="utf-8") as f:
                 dash_html = f.read()
@@ -208,8 +212,8 @@ class TestSafeLockAndWeb(unittest.TestCase):
             self.assertIn('sendParentChatMessage', dash_html)
 
     def test_parent_dashboard_binary_screen_handling(self):
-        """Kiểm tra Parent Dashboard (dashboard.html & index.html) hỗ trợ nhận Binary Blob và tự giải phóng revokeObjectURL."""
-        for filename in ["dashboard.html", "index.html"]:
+        """Kiểm tra Parent Dashboard (dashboard.html) hỗ trợ nhận Binary Blob và tự giải phóng revokeObjectURL."""
+        for filename in ["dashboard.html"]:
             tmpl_path = os.path.join(BASE_DIR, "server", "templates", filename)
             with open(tmpl_path, "r", encoding="utf-8") as f:
                 content = f.read()
@@ -280,7 +284,7 @@ class TestSafeLockAndWeb(unittest.TestCase):
         self.assertNotIn("window.open(", child_js, "Không được dùng window.open")
 
         # 3. Kiểm tra Parent Dashboard
-        for filename in ["dashboard.html", "index.html"]:
+        for filename in ["dashboard.html"]:
             dash_path = os.path.join(BASE_DIR, "server", "templates", filename)
             with open(dash_path, "r", encoding="utf-8") as f:
                 dash_html = f.read()
@@ -403,8 +407,8 @@ class TestSafeLockAndWeb(unittest.TestCase):
             child_css = f.read()
         self.assertIn("z-index: 9990;", child_css)
 
-        # 2. Kiểm tra parent dashboard (dashboard.html & index.html)
-        for filename in ["dashboard.html", "index.html"]:
+        # 2. Kiểm tra parent dashboard (dashboard.html)
+        for filename in ["dashboard.html"]:
             tmpl_path = os.path.join(BASE_DIR, "server", "templates", filename)
             with open(tmpl_path, "r", encoding="utf-8") as f:
                 dash_html = f.read()

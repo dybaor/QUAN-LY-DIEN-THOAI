@@ -1,257 +1,199 @@
 """
-OGK-Agent WebSocket Client & Server Communication (Thành viên A - Realtime & Sync)
-- Kết nối WebSocket ws://127.0.0.1:8000/ws/{device_id} lắng nghe lệnh lock_now (< 5s).
-- Gửi Heartbeat định kỳ mỗi 60 giây lên POST /heartbeat.
-- Tự động đẩy hàng đợi sự kiện (Events Ingestion 7 trường) lên POST /events/batch.
-- Tự động đồng bộ Policy từ GET /policy/{child_id}.
+OGK-Agent Network Client (KT-3, KT-4, KT-5, F4-2)
+- Heartbeat mỗi 60 giây: gửi hạn mức đã dùng (`quota_used`), nhận `server_time` để đối chiếu đồng hồ.
+- Kéo chính sách từ `/agent/policy` và chỉ nạp vào cache khi chữ ký HMAC-SHA256 hợp lệ.
+- Gửi bù hàng đợi sự kiện kèm `idempotency_key`; chỉ xóa khỏi cache khi máy chủ xác nhận.
+- WebSocket `/ws/agent` (Bearer token, TLS + ghim chứng chỉ) nhận lệnh khẩn: khóa, mở khóa, +giờ, xóa cache.
 """
 
 import asyncio
+import hashlib
+import hmac
 import json
 import threading
 import time
 from datetime import date
-from typing import Any, Dict, List, Optional
+from typing import Callable, Dict, Optional
+
 import requests
 import websockets
-from blocker import blocker
+
+import settings
 from local_cache import local_cache
+from transport import AuthError, api, certificate_matches, websocket_ssl_context
+
+
+def canonical_json(payload: dict) -> bytes:
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str).encode("utf-8")
+
+
+def verify_policy_signature(envelope: dict, key: Optional[str], device_id: str) -> Optional[dict]:
+    """Trả về chính sách nếu chữ ký hợp lệ và đúng thiết bị; ngược lại None."""
+    policy, signature = envelope.get("policy"), envelope.get("signature", "")
+    if not key or not isinstance(policy, dict) or envelope.get("algorithm") != "HMAC-SHA256":
+        return None
+    expected = hmac.new(key.encode("utf-8"), canonical_json(policy), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, signature) or policy.get("device_id") != device_id:
+        return None
+    return policy
 
 
 class AgentNetworkClient:
-    """Quản lý kết nối mạng và WebSocket cho Agent."""
-
-    def __init__(self, server_url: str = "http://127.0.0.1:8000", ws_url: str = "ws://127.0.0.1:8000/ws"):
-        self.server_url = server_url
-        self.ws_url = ws_url
-        self.device_id = local_cache.device_id
-        self.child_id = local_cache.child_id
+    def __init__(self):
         self.is_online = False
-        self._stop_event = threading.Event()
+        self.ui_present = True
+        self._stop = threading.Event()
         self._flush_lock = threading.Lock()
-        self._ws_thread: Optional[threading.Thread] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._current_ws = None
-        self._loop = None
-        self.consent_callback = None
-        self.policy_callback = None
-        self.shutdown_callback = None
-        self.lock_callback = None
-        self.unlock_callback = None
-        self.close_session_callback = None
-        self.deduct_callback = None
+        self.handlers: Dict[str, Callable[[dict], None]] = {}
+        self.on_server_time: Optional[Callable[[float, float, float], None]] = None
 
-    def set_consent_callback(self, cb):
-        self.consent_callback = cb
+    def on(self, command: str, handler: Callable[[dict], None]):
+        self.handlers[command] = handler
 
-    def set_policy_callback(self, cb):
-        self.policy_callback = cb
-
-    def set_shutdown_callback(self, cb):
-        self.shutdown_callback = cb
-
-    def set_lock_callback(self, cb):
-        self.lock_callback = cb
-
-    def set_unlock_callback(self, cb):
-        self.unlock_callback = cb
-
-    def set_close_session_callback(self, cb):
-        self.close_session_callback = cb
-
-    def set_deduct_callback(self, cb):
-        self.deduct_callback = cb
-
-    def send_response(self, data: dict) -> bool:
-        """Gửi thông điệp phản hồi ngược lại Server qua WebSocket hoặc HTTP."""
-        if self._current_ws and self._loop and self._loop.is_running():
+    def _dispatch(self, command: str, data: dict):
+        handler = self.handlers.get(command)
+        if handler:
             try:
-                msg = json.dumps(data)
-                asyncio.run_coroutine_threadsafe(self._current_ws.send(msg), self._loop)
-                return True
-            except Exception:
-                pass
-        # Fallback qua HTTP nếu WS bận
-        try:
-            if data.get("type") == "consent_response":
-                requests.post(f"{self.server_url}/commands/consent-response", json=data, timeout=3.0)
-                return True
-        except Exception:
-            pass
-        return False
+                handler(data)
+            except Exception as exc:
+                print(f"[WS_HANDLER_ERROR] {command}: {exc}")
 
+    # ---------- HTTP ----------
     def send_heartbeat(self) -> bool:
-        """Gửi heartbeat lên server mỗi 60s và đồng bộ chính sách khi có version mới."""
-        policy = local_cache.get_policy()
-        ver = policy.get("version", 1) if policy else 1
-        day = date.today()
+        if not local_cache.is_enrolled:
+            return False
+        policy = local_cache.get_policy() or {}
+        today = date.today()
         payload = {
-            "device_id": self.device_id,
             "status": "online",
-            "current_policy_version": ver,
-            "usage_day": day.isoformat(),
-            "used_seconds": local_cache.get_today_usage_seconds(day),
+            "current_policy_version": policy.get("version", 0),
+            "usage_day": today.isoformat(),
+            "quota_used": local_cache.get_today_usage_seconds(today),
+            "client_time": time.time(),
+            "ui_present": self.ui_present,
         }
         try:
-            resp = requests.post(f"{self.server_url}/heartbeat", json=payload, timeout=5.0)
-            if resp.status_code == 200:
-                data = resp.json()
-                self.is_online = True
-                latest_ver = data.get("latest_version", ver)
-                if data.get("need_policy_update", False) or latest_ver > ver or not policy:
-                    print(f"[SYNC] Phát hiện chính sách mới (v{latest_ver} > v{ver}), tiến hành đồng bộ...")
-                self.sync_policy()  # Daily adjustments can change without a policy version change.
-                self.flush_events()
-                return True
-        except Exception:
-            self.is_online = False
+            started = time.time()
+            resp = api.request("POST", "/heartbeat", json=payload)
+            finished = time.time()
+            if resp.status_code != 200:
+                return False
+            data = resp.json()
+            self.is_online = True
+            if self.on_server_time and data.get("server_epoch"):
+                self.on_server_time(float(data["server_epoch"]), started, finished)
+            # Điều chỉnh giờ trong ngày có thể đổi mà không tăng version nên luôn đồng bộ.
+            self.sync_policy()
+            self.flush_events()
+            return True
+        except AuthError as exc:
+            print(f"[AUTH] {exc}")
+        except (requests.RequestException, ValueError):
+            pass
+        self.is_online = False
         return False
 
     def sync_policy(self) -> bool:
-        """Kéo chính sách mới từ server về lưu vào cache SQLite."""
         try:
-            resp = requests.get(f"{self.server_url}/policy/{self.child_id}", timeout=5.0)
-            if resp.status_code == 200:
-                data = resp.json()
-                local_cache.save_policy(data)
-                print(f"[SYNC_SUCCESS] Đã đồng bộ chính sách v{data.get('version')} vào SQLite cache.")
-                return True
-        except Exception as e:
-            print(f"[SYNC_ERROR] Lỗi đồng bộ chính sách: {e}")
+            resp = api.request("GET", "/agent/policy")
+            if resp.status_code != 200:
+                return False
+            policy = verify_policy_signature(resp.json(), local_cache.get_secret("policy_key"), local_cache.device_id)
+        except (AuthError, requests.RequestException, ValueError):
+            return False
+        if policy is None:
+            print("[SECURITY] Chữ ký chính sách không hợp lệ — giữ nguyên bản đang dùng.")
+            return False
+        cached = local_cache.get_policy() or {}
+        if policy.get("version", 0) < cached.get("version", 0):
+            print("[SECURITY] Từ chối chính sách cũ hơn bản đang dùng (chống phát lại).")
+            return False
+        local_cache.save_policy(policy)
+        self._dispatch("policy_updated", policy)
+        return True
+
+    def flush_events(self, limit: int = 100) -> int:
+        with self._flush_lock:
+            events = local_cache.peek_events(limit)
+            if not events:
+                return 0
+            batch = [{key: ev[key] for key in ("ts", "type", "subject", "duration_sec", "policy_id", "idempotency_key")}
+                     for ev in events]
+            try:
+                resp = api.request("POST", "/events/batch", json=batch)
+            except (AuthError, requests.RequestException):
+                return 0
+            if resp.status_code in (200, 201):
+                local_cache.delete_events([ev["id"] for ev in events])
+                return len(batch)
+            return 0
+
+    def send_message(self, data: dict) -> bool:
+        if self._current_ws and self._loop and self._loop.is_running():
+            asyncio.run_coroutine_threadsafe(self._current_ws.send(json.dumps(data)), self._loop)
+            return True
         return False
 
-    def flush_events(self, limit: int = 50) -> int:
-        """Đẩy các sự kiện ngoại tuyến lên Server theo lô 7 trường chuẩn.
-        Chỉ xóa khỏi SQLite khi Server trả về HTTP 200 hoặc 201."""
-        with self._flush_lock:
-            return self._flush_events(limit)
-
-    def _flush_events(self, limit: int) -> int:
-        events = local_cache.peek_events(limit)
-        if not events:
-            return 0
-        batch_payload = [
-            {
-                "ts": ev["ts"],
-                "device_id": ev["device_id"],
-                "child_id": ev["child_id"],
-                "type": ev["type"],
-                "subject": ev["subject"],
-                "duration_sec": ev["duration_sec"],
-                "policy_id": ev["policy_id"],
-            }
-            for ev in events
-        ]
-        ids = [ev["id"] for ev in events]
-        try:
-            resp = requests.post(f"{self.server_url}/events/batch", json=batch_payload, timeout=8.0)
-            if resp.status_code in (200, 201):
-                local_cache.delete_events(ids)
-                return len(batch_payload)
-            # Thử endpoint fallback /events/
-            resp2 = requests.post(f"{self.server_url}/events/", json=batch_payload, timeout=8.0)
-            if resp2.status_code in (200, 201):
-                local_cache.delete_events(ids)
-                return len(batch_payload)
-        except Exception:
-            pass
-        return 0
-
+    # ---------- WebSocket ----------
     async def _ws_loop(self):
-        ws_uri = f"{self.ws_url}/{self.device_id}"
-        while not self._stop_event.is_set():
+        while not self._stop.is_set():
+            token = local_cache.get_secret("access_token")
+            if not token:
+                await asyncio.sleep(5)
+                continue
             try:
-                async with websockets.connect(ws_uri, ping_interval=20, ping_timeout=20) as ws:
+                async with websockets.connect(settings.WS_URL, additional_headers={"Authorization": f"Bearer {token}"},
+                                              ssl=websocket_ssl_context(), ping_interval=20, ping_timeout=20) as ws:
+                    if not certificate_matches(ws):
+                        print("[SECURITY] Chứng chỉ máy chủ không khớp vân tay đã ghim — ngắt kết nối.")
+                        await ws.close()
+                        await asyncio.sleep(30)
+                        continue
                     self._current_ws = ws
-                    print(f"[WS] Kết nối WebSocket thành công tới {ws_uri}")
                     self.is_online = True
-                    # Vừa kết nối là đồng bộ policy ngay
-                    self.sync_policy()
-                    self.flush_events()
-
-                    while not self._stop_event.is_set():
+                    print(f"[WS] Đã kết nối {settings.WS_URL}")
+                    await asyncio.to_thread(self.sync_policy)
+                    await asyncio.to_thread(self.flush_events)
+                    async for raw in ws:
                         try:
-                            msg = await asyncio.wait_for(ws.recv(), timeout=2.0)
-                            data = json.loads(msg)
-                            cmd = data.get("cmd") or data.get("action")
-                            reason = data.get("reason", "Lệnh từ phụ huynh")
-                            if cmd in ("lock_now", "lock_window", "lock_app"):
-                                print(f"[WS_COMMAND] Nhận lệnh khóa cửa sổ ({cmd})! Lý do: {reason}")
-                                if self.lock_callback:
-                                    self.lock_callback(reason)
-                                else:
-                                    blocker.show_user_popup("KHÓA CỬA SỔ", f"Ba mẹ đã tạm khóa phiên làm việc ({reason}).")
-                            elif cmd in ("unlock_window", "unlock"):
-                                print(f"[WS_COMMAND] Nhận lệnh mở khóa cửa sổ ({cmd})!")
-                                if self.unlock_callback:
-                                    self.unlock_callback(reason)
-                                else:
-                                    blocker.show_user_popup("MỞ KHÓA", "Ba mẹ đã mở khóa cửa sổ.")
-                            elif cmd in ("close_session", "quit_launcher"):
-                                print(f"[WS_COMMAND] Nhận lệnh đóng phiên làm việc ({cmd})!")
-                                if self.close_session_callback:
-                                    self.close_session_callback(reason)
-                            elif cmd == "shutdown_now":
-                                timeout_sec = data.get("timeout_sec", 10)
-                                print(f"[WS_COMMAND] Nhận lệnh shutdown_now -> Chuyển thành đóng phiên làm việc...")
-                                if self.close_session_callback:
-                                    self.close_session_callback(reason)
-                                elif self.shutdown_callback:
-                                    self.shutdown_callback(timeout_sec, reason)
-                            elif cmd == "cancel_shutdown":
-                                print(f"[WS_COMMAND] Nhận lệnh cancel_shutdown! Hủy lệnh...")
-                                blocker.cancel_shutdown()
-                            elif cmd in ("time_deducted", "deduct_time"):
-                                deduct_min = data.get("deduct_min", data.get("minutes", 15))
-                                print(f"[WS_COMMAND] Nhận thông báo trừ giờ: -{deduct_min} phút!")
-                                self.sync_policy()
-                                if self.deduct_callback:
-                                    self.deduct_callback(deduct_min, reason)
-                                if self.policy_callback:
-                                    self.policy_callback("time_deducted", data)
-                            elif cmd == "request_screen_consent":
-                                print(f"[WS_COMMAND] Nhận yêu cầu đồng thuận xem màn hình...")
-                                if self.consent_callback:
-                                    self.consent_callback(reason)
-                                else:
-                                    blocker.show_user_popup("YÊU CẦU ĐỒNG THUẬN", f"Ba mẹ đang yêu cầu xem màn hình của bạn ({reason}).")
-                            elif cmd in ("sync_policy", "extend_time"):
-                                print(f"[WS_COMMAND] Nhận lệnh {cmd}! Đồng bộ chính sách mới tức thì...")
-                                self.sync_policy()
-                                if self.policy_callback:
-                                    self.policy_callback(cmd, data)
-                        except asyncio.TimeoutError:
+                            data = json.loads(raw)
+                        except ValueError:
                             continue
-                        except websockets.exceptions.ConnectionClosed:
-                            break
-            except Exception:
+                        command = data.get("cmd") or data.get("action")
+                        if command:
+                            await asyncio.to_thread(self._dispatch, command, data)
+            except websockets.exceptions.InvalidStatus as exc:
+                if getattr(exc.response, "status_code", 0) in (401, 403):
+                    await asyncio.to_thread(self._refresh_or_flag)
+            except (OSError, websockets.exceptions.WebSocketException):
                 pass
             finally:
                 self._current_ws = None
-            for _ in range(5):
-                if self._stop_event.is_set():
-                    break
-                time.sleep(1)
+            await asyncio.sleep(5)
+
+    def _refresh_or_flag(self):
+        try:
+            if not api.refresh():
+                print("[AUTH] Thiết bị cần được ghép đôi lại.")
+        except requests.RequestException:
+            pass
 
     def start(self):
-        def _run():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            self._loop = loop
+        def run():
+            self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
             try:
-                loop.run_until_complete(self._ws_loop())
+                self._loop.run_until_complete(self._ws_loop())
             finally:
-                loop.close()
+                self._loop.close()
 
-        self._ws_thread = threading.Thread(target=_run, name="WSClientThread", daemon=True)
-        self._ws_thread.start()
+        threading.Thread(target=run, name="WSClientThread", daemon=True).start()
 
     def stop(self):
-        self._stop_event.set()
-        try:
-            self.flush_events()
-        except Exception:
-            pass
+        self._stop.set()
+        self.flush_events()
 
 
 ws_client = AgentNetworkClient()
-

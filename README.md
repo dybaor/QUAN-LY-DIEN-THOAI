@@ -22,86 +22,86 @@ Hệ thống hoạt động theo mô hình Client - Server kết hợp Web App t
 │ • RESTful API & SQLite DB     │◄──WebSocket──►│ • Agent Daemon (LocalSystem)  │
 │ • Parent Dashboard (/)        │   (Realtime)  │   - Đo thời gian & Idle       │
 │ • Child Web Portal (/child)   │               │   - Quét SHA-256 tiến trình   │
-│ • Binary Frame Relay (30 FPS) │               │ • DNS Proxy Lọc mạng (Port 53)│
+│ • Binary Frame Relay (30 FPS) │               │ • Tray UI (khay hệ thống)     │
+│                               │               │ • DNS Proxy Lọc mạng (Port 53)│
 └───────────────────────────────┘               └───────────────────────────────┘
 ```
 
 1. **FastAPI Backend Server & Web Dashboard:** Quản lý chính sách (Policy), xử lý WebSocket 2 chiều, phục vụ trang quản lý Phụ huynh (`http://127.0.0.1:8000`) và cổng học tập máy con Child Web Portal (`http://127.0.0.1:8000/child`).
-2. **Client Agent Service (Headless Daemon):** Tiến trình chạy ngầm giám sát thời gian thực bằng `time.monotonic()`, phát hiện gian lận đổi giờ hệ thống, tiêu diệt tiến trình cấm bằng mã băm SHA-256 trong < 2 giây.
-3. **Child Web Portal:** Cổng học tập an toàn 100% Web UI, hỗ trợ khóa In-Page Lock an toàn (không gọi khóa hệ điều hành Windows), tích hợp chia sẻ màn hình đồng thuận tốc độ cao 15–30 FPS (Binary JPEG Blob).
-4. **DNS Proxy Lọc mạng:** Server DNS cục bộ trên UDP port 53, lọc tên miền độc hại theo blocklist và cưỡng chế SafeSearch cho Google & YouTube.
+2. **Client Agent Service + Tray UI:** Windows Service đếm giờ bằng `time.monotonic()` (loại trừ màn hình khóa và nhàn rỗi), phát hiện chỉnh đồng hồ (so với giờ máy chủ), chặn ứng dụng theo SHA-256 và ghi sự kiện (cảnh báo 10/5/1 phút, ân hạn 60 giây, `locked`...). **Agent không khóa Windows và không mở popup**: việc khóa chỉ là overlay trên Cổng học tập. Biểu tượng khay hệ thống chạy trong phiên của trẻ, giao tiếp với Service qua named pipe (chỉ chuyển trạng thái).
+3. **Child Web Portal:** Cổng học tập của trẻ (ghép đôi bằng mã 8 ký tự), màn hình khóa (overlay) khi hết giờ / ngoài lịch tuần / phụ huynh khóa, chia sẻ màn hình khi trẻ đồng ý (15–30 FPS), màn hình minh bạch "Hôm nay em đã dùng gì" và nhật ký thay đổi của ba mẹ.
+4. **DNS Proxy Lọc mạng:** Server DNS cục bộ trên UDP port 53, phân loại 6 nhóm nội dung (giáo dục, giải trí, mạng xã hội, trò chơi, không phù hợp, chưa phân loại), chặn theo chính sách độ tuổi của trẻ, cưỡng chế SafeSearch và chặn DoH.
 
 ---
 
 ## 2. CẤU TRÚC THƯ MỤC DỰ ÁN
 
 ```text
-demo/
-├── server/             # Máy chủ FastAPI, Database SQLite, Templates & Static Web
-│   ├── app/            # Routers (policy, events, ws, requests), Models, DB
-│   ├── templates/      # Dashboard phụ huynh (dashboard.html) & Child Portal (child_portal.html)
-│   ├── static/         # CSS & JavaScript (child.js)
-│   └── run_server.py   # Script chạy máy chủ (Port 8000)
-│
-├── agent/              # Client Agent chạy ngầm trên máy tính
-│   ├── main_service.py # Dịch vụ Windows Service (LocalSystem)
-│   ├── tracker.py      # Bộ đếm giờ monotonic, phát hiện nhàn rỗi (idle) & lùi giờ
-│   ├── blocker.py      # Quét mã băm SHA-256 ứng dụng và kết thúc tiến trình cấm
-│   ├── local_cache.py  # Cache SQLite cục bộ chế độ WAL hỗ trợ lưu trữ offline
-│   └── ws_client.py    # Kết nối WebSocket duy trì liên lạc với Server
-│
-├── dns_proxy/          # Trình phân giải và lọc tên miền mạng
-│   ├── proxy_server.py # DNS Proxy Server UDP Port 53
-│   ├── blocklist.json  # Danh sách tên miền cấm phân loại theo chủ đề
-│   └── safesearch.py   # Ép buộc địa chỉ IP SafeSearch (Google/YouTube)
-│
-├── tests/              # Bộ kiểm thử tự động toàn diện (25 unit/integration tests)
-├── build_release.py    # Kịch bản DevOps đóng gói tự động thành file .exe độc lập
-└── dist_package/       # Gói cài đặt triển khai 1-click hoàn chỉnh
+├── Start_App.bat       # Launcher duy nhất cho Windows (mã nguồn hoặc gói .exe)
+├── Start_App.command   # Launcher duy nhất cho macOS (chỉ máy chủ + giao diện web)
+├── reset_database.py   # Đưa dữ liệu về trạng thái chưa có tài khoản (gọi qua --reset)
+├── server/             # FastAPI + SQLite WAL, Dashboard phụ huynh & Cổng học tập của trẻ
+│   ├── app/            # config, security (Argon2id/AES-GCM/HMAC/JWT), deps (phân quyền), audit, routers
+│   ├── templates/      # dashboard.html, child_portal.html
+│   └── static/         # CSS & JavaScript
+├── agent/              # Agent Windows: Service + biểu tượng khay hệ thống (tray_ui.py)
+│   ├── main_service.py # Service / CLI: enroll, status, debug, tray, uninstall
+│   ├── enforcer.py     # Hạn mức, lịch 7x48, cảnh báo 10/5/1 phút, ân hạn 60 giây, ghi sự kiện (không khóa Windows)
+│   ├── tracker.py      # Đếm giờ monotonic, loại trừ màn hình khóa / nhàn rỗi, đối chiếu giờ máy chủ
+│   ├── blocker.py      # Chặn ứng dụng theo SHA-256, hiển thị lý do cho trẻ
+│   ├── ui_bridge.py    # Named pipe Service ↔ khay hệ thống (chỉ chuyển trạng thái, chống chế độ ẩn)
+│   ├── ws_client.py    # Heartbeat 60s, chính sách có chữ ký HMAC, gửi bù sự kiện (idempotency)
+│   └── local_cache.py  # SQLite WAL, token mã hóa AES-GCM (khóa bảo vệ bằng DPAPI)
+├── dns_proxy/          # DNS Proxy: 6 nhóm nội dung, SafeSearch, chặn DoH
+├── desktop/            # Ứng dụng Electron OGKParent / OGKChild
+├── tests/              # pytest + node:test
+└── build_release.py    # Đóng gói .exe vào dist_package/
 ```
 
 ---
 
-## 3. HƯỚNG DẪN 1 BƯỚC KHỞI ĐỘNG NHANH ĐỂ DEMO (QUICK START)
+## 3. KHỞI CHẠY NHANH
 
-### Cách 1: Sử dụng Bản Phát Hành 1-Click (Khuyên dùng)
-1. Tải hoặc clone repository, rồi mở thư mục `dist_package/`.
-2. Nhấp đúp **`Start_App.bat`** để chạy OGK Server, Agent và mở hai giao diện trên trình duyệt.
-3. Để bật DNS Proxy, chạy riêng **`start_proxy.bat`** bằng quyền Administrator.
-4. Dùng **`Stop_App.bat`** để dừng Server và Agent.
+### Windows
+Nhấp đúp **`Start_App.bat`** ở thư mục gốc. Lần đầu launcher tự tạo `.venv` và cài thư viện (cần Python 3.11+), bật máy chủ trong cửa sổ **OGK Server**, rồi mở Dashboard phụ huynh (`http://127.0.0.1:8000`) và Cổng học tập (`http://127.0.0.1:8000/child`). Trong gói đã build (`dist_package/`), cùng file này chạy `ogk_server.exe` thay cho Python.
 
-> `dist_package/` chứa bộ chạy Windows dựng sẵn. Mã nguồn mới nhất nằm trong `server/`, `agent/` và `dns_proxy/`; các file `.exe` trong gói là bản dựng hiện có và cần được build lại trên Windows sau khi cập nhật mã nguồn. Database và cache runtime không được đưa lên GitHub.
+| Lệnh | Tác dụng |
+| --- | --- |
+| `Start_App.bat --server-only` | Chỉ bật máy chủ (dùng với `OGKParent.exe` / `OGKChild.exe`) |
+| `Start_App.bat --with-agent` | Bật thêm Agent chế độ debug (máy đã ghép đôi) |
+| `Start_App.bat --with-dns` | Bật thêm DNS Proxy (chạy bằng *Run as administrator*) |
+| `Start_App.bat --reset` | Xóa dữ liệu, đưa hệ thống về trạng thái chưa có tài khoản |
+| `Start_App.bat --stop` | Dừng máy chủ, Agent debug và DNS Proxy |
 
-### Ứng dụng riêng cho phụ huynh và trẻ
-Xem [cách tạo và chạy hai ứng dụng Windows](desktop/README.md).
+### macOS
+Chạy `./Start_App.command` (hỗ trợ `--server-only`, `--reset`). Nhấn `Ctrl+C` để dừng. Agent và DNS Proxy chỉ chạy trên Windows.
 
-### Khởi chạy server từ mã nguồn trên Windows
-Trong thư mục `server/`, nhấp đúp `Start_App.bat`. Launcher tự tạo môi trường `.venv`, cài thư viện còn thiếu, khởi chạy server, đợi server sẵn sàng rồi mở hai trang web. Cần cài Python 3.11+ trước. Đóng cửa sổ **OGK Server** để dừng.
-
-### Khởi chạy nhanh trên macOS
-Trên macOS, chạy `Start_App.command` trong thư mục `server/`. Launcher tự tạo `.venv`, cài thư viện backend còn thiếu, khởi động server và mở trang phụ huynh cùng giao diện trẻ trên trình duyệt. Nhấn `Ctrl+C` trong Terminal để dừng.
-
-### Cách 2: Khởi chạy từ Mã Nguồn Python
-Yêu cầu: Python 3.11+ trên Windows 10/11 x64.
-
-1. **Cài đặt thư viện phụ thuộc:**
-   ```powershell
-   pip install fastapi uvicorn sqlalchemy websockets psutil pywin32 dnslib pytest pytest-asyncio
-   ```
-2. **Khởi chạy Server:**
-   ```powershell
-   python server/run_server.py
-   ```
-3. **Mở trình duyệt:**
-   - Phụ huynh quản lý: `http://127.0.0.1:8000`
-   - Máy con học tập: `http://127.0.0.1:8000/child`
+### Luồng sử dụng
+1. **Dashboard** → tạo tài khoản phụ huynh (mật khẩu ≥ 10 ký tự) và hồ sơ trẻ đầu tiên (tên, tuổi, mã PIN mở khóa 4–6 số).
+2. **Thiết bị của trẻ** → *Tạo mã ghép đôi* (8 ký tự, hạn 10 phút).
+3. Trên máy của trẻ:
+   - **Cổng học tập**: nhập mã trên màn hình chờ. Khi demo trên một máy, bấm *Mở Cổng học tập trên máy này*.
+   - **Agent**: chạy `agent\install_service.bat` bằng quyền Administrator và nhập mã (hoặc `python agent/main_service.py enroll <MÃ>` rồi `Start_App.bat --with-agent`).
 
 ---
 
-## 4. CHẠY KIỂM THỬ TỰ ĐỘNG (AUTOMATED TESTS)
+## 4. BẢO MẬT & QUYỀN RIÊNG TƯ
 
-Chạy bộ kiểm thử tự động toàn diện bằng `pytest`:
+- Mật khẩu phụ huynh và mã PIN băm **Argon2id**. Nhập sai 5 lần thì khóa 15 phút; đăng nhập bị giới hạn tần suất theo IP.
+- Phiên đăng nhập dùng cookie `HttpOnly` + `SameSite=Strict` (`Secure` khi chạy HTTPS), được hủy phía máy chủ khi đăng xuất. Mọi yêu cầu ghi phải có mã chống CSRF.
+- Phân quyền 3 vai trò `parent` / `child-view` / `admin`. Mọi truy vấn đều kiểm tra quyền sở hữu trẻ (chống IDOR). Admin chỉ có thêm quyền quản trị hệ thống, không xem được dữ liệu trẻ của gia đình khác.
+- Agent dùng access token 15 phút + refresh token xoay vòng, có danh sách thu hồi. Chính sách được ký **HMAC-SHA256** bằng khóa riêng của từng thiết bị. Có hỗ trợ TLS 1.2+ và ghim chứng chỉ (`OGK_SERVER_URL=https://…`, `OGK_CERT_SHA256=…`).
+- Trường nhạy cảm được mã hóa **AES-256-GCM**: tên trẻ và khóa ký trên máy chủ (khóa lấy từ `OGK_DATA_KEY`, hoặc tự sinh trong `ogk_secrets.json`); token trên Agent (khóa bảo vệ bằng DPAPI).
+- **Nhật ký kiểm toán**: mọi thay đổi cấu hình đều ghi lại ai, lúc nào, IP, giá trị cũ → mới. Trẻ xem được trong Cổng học tập.
+- Dữ liệu hoạt động cũ hơn 90 ngày tự động bị xóa. Nút *Xóa toàn bộ dữ liệu* xóa trên máy chủ và yêu cầu Agent xóa bộ nhớ đệm.
+- Agent luôn hiện biểu tượng khay hệ thống. Nếu không thấy giao diện quá 2 phút, Agent tạm dừng giám sát và báo cho phụ huynh. Gỡ cài đặt bắt buộc có tài khoản phụ huynh.
+
+---
+
+## 5. CHẠY KIỂM THỬ TỰ ĐỘNG
+
 ```powershell
-python -m pytest tests/ -v
+python -m pytest tests -q
+node --test tests/ui_behavior.test.cjs
 ```
-*(Đảm bảo 25/25 bài kiểm thử chạy qua thành công 100%)*
+Bộ test dùng thư mục dữ liệu tạm (`tests/conftest.py`), không chạm vào `ogk_system.db` thật.

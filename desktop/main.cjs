@@ -57,7 +57,8 @@ function openGoogle(query, isolated) {
 
 app.whenReady().then(() => {
     Menu.setApplicationMenu(null);
-    const childSession = childMode ? session.fromPartition('ogk-child') : null;
+    // 'persist:' giữ phiên ghép đôi của cổng trẻ qua các lần mở lại ứng dụng
+    const childSession = childMode ? session.fromPartition('persist:ogk-child') : null;
     mainWindow = new BrowserWindow({
         title: childMode ? 'OGK Trẻ em' : 'OGK Phụ huynh',
         width: 1280,
@@ -96,12 +97,11 @@ app.whenReady().then(() => {
         childSession.on('will-download', event => event.preventDefault());
         childSession.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, done) => {
             const url = new URL(details.url);
+            // Cổng của trẻ chỉ được gọi nhóm API dành cho vai trò child-view
             const localPage = url.origin === origin && (
-                url.pathname === '/child' || url.pathname.startsWith('/static/') ||
-                /^\/(?:policy|web-usage|api\/auth\/status)\/\d+$/.test(url.pathname) ||
-                ['/api/access-log', '/events/', '/api/settings/verify-pin', '/requests/'].includes(url.pathname)
+                url.pathname === '/child' || url.pathname.startsWith('/static/') || url.pathname.startsWith('/api/child/')
             );
-            const childSocket = url.origin === wsOrigin && url.pathname.startsWith('/ws/child/');
+            const childSocket = url.origin === wsOrigin && url.pathname === '/ws/child';
             const styles = url.origin === 'https://cdn.tailwindcss.com' && details.resourceType === 'script';
             done({ cancel: !(localPage || childSocket || styles) });
         });

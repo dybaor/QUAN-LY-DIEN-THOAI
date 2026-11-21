@@ -6,9 +6,9 @@ Module DNS Server cục bộ lắng nghe trên cổng UDP 53, phụ trách kiể
 
 ## 1. CÁC TÍNH NĂNG CHÍNH
 
-- **Lọc Tên Miền Theo Danh Sách Cấm (`blocklist.json`):**
-  - Chứa danh sách các tên miền độc hại, bạo lực, cờ bạc, nội dung không lành mạnh.
-  - Tự động chặn bằng cách phản hồi bản ghi DNS trỏ về `127.0.0.1` hoặc trả về `NXDOMAIN`.
+- **Phân loại 6 nhóm nội dung (`blocklist.json`):** giáo dục, giải trí, mạng xã hội, trò chơi, không phù hợp lứa tuổi, chưa phân loại.
+  - Nhóm bị chặn lấy từ chính sách của trẻ (`blocked_categories`, `blocked_domains`) trong bộ nhớ đệm của Agent, làm mới mỗi 30 giây. Khi chưa có chính sách, proxy dùng cấu hình mặc định cho trẻ 6–11 tuổi: chặn mạng xã hội, trò chơi và nội dung không phù hợp.
+  - Tên miền bị chặn được trả về `0.0.0.0`. Truy vấn (`domain_query`) và lần chặn (`blocked_domain`) được ghi vào hàng đợi của Agent, chỉ lưu tên miền cấp 2, để gửi lên máy chủ bằng token đã ghép đôi.
 - **Cưỡng Chế Tìm Kiếm An Toàn (Enforce SafeSearch - `safesearch.py`):**
   - Tự động điều hướng các yêu cầu tìm kiếm Google (`google.com`, `google.com.vn`) sang `forcesafesearch.google.com` (IP: `216.239.38.120`).
   - Điều hướng YouTube (`youtube.com`) sang `restrict.youtube.com` (IP: `216.239.38.119`).

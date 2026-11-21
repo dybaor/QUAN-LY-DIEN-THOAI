@@ -9,7 +9,6 @@ Bộ kiểm thử tự động xác thực hệ thống Cửa sổ Trẻ em (Chi
 5. Luồng xin thêm giờ (Time Extension Request) hoạt động chính xác.
 """
 
-import asyncio
 import os
 import sys
 import unittest
@@ -26,13 +25,6 @@ for p in [str(BASE_DIR), str(SERVER_DIR)]:
 
 from app.main import serve_child_portal
 from app.websocket_manager import manager
-from app.database import SessionLocal
-from app.routers.requests import (
-    create_time_request, 
-    CreateTimeRequestSchema, 
-    approve_time_request, 
-    ApproveRequestSchema
-)
 
 
 class TestChildWebLock(unittest.TestCase):
@@ -40,7 +32,7 @@ class TestChildWebLock(unittest.TestCase):
     def test_get_child_portal_html_and_dom_elements(self):
         """Kiểm tra route GET /child trả về HTTP 200 và đầy đủ cấu trúc DOM chuẩn."""
         req = Request({"type": "http", "method": "GET", "path": "/child", "headers": []})
-        resp = serve_child_portal(req, child_id=1)
+        resp = serve_child_portal(req)
         self.assertEqual(resp.status_code, 200, "Route /child phải trả về HTTP 200")
         
         html = resp.body.decode("utf-8")
@@ -113,22 +105,15 @@ class TestChildWebLock(unittest.TestCase):
         manager.disconnect(device_key, mock_ws)
         self.assertNotIn(device_key, manager.active_connections, "Phải dọn dẹp kết nối khi client ngắt kết nối")
 
-    def test_time_request_creation_and_policy_integration(self):
-        """Kiểm tra API xin thêm giờ từ Child Portal và phê duyệt từ phụ huynh."""
-        db = SessionLocal()
-        try:
-            # 1. Trẻ gửi yêu cầu xin thêm 15 phút
-            req_data = CreateTimeRequestSchema(
-                child_id=1,
-                requested_minutes=15,
-                reason="Bé An xin thêm 15 phút làm bài tập kiểm tra toán"
-            )
-            res = asyncio.run(create_time_request(req_data, db))
-            self.assertEqual(res.get("status"), "success")
-            req_id = res.get("request_id")
-            self.assertIsNotNone(req_id)
-        finally:
-            db.close()
+
+
+def test_time_request_creation_from_portal(parent, portal):
+    """Trẻ xin thêm giờ từ cổng học tập; phụ huynh thấy yêu cầu đang chờ."""
+    res = portal.client.post("/api/child/time-requests", json={
+        "requested_minutes": 15, "reason": "Bé An xin thêm 15 phút làm bài tập kiểm tra toán"})
+    assert res.status_code == 200 and res.json()["request_id"]
+    pending = parent.client.get(f"/requests/{parent.child_id}").json()
+    assert any(r["id"] == res.json()["request_id"] and r["status"] == "pending" for r in pending)
 
 
 if __name__ == "__main__":

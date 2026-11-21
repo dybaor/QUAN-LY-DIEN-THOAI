@@ -1,50 +1,45 @@
-# OGK SERVER - MÁY CHỦ QUẢN LÝ & WEB DASHBOARD
+# OGK SERVER — MÁY CHỦ QUẢN LÝ & WEB DASHBOARD
 
-Module trung tâm phụ trách lưu trữ chính sách bảo vệ, quản trị cơ sở dữ liệu SQLite, điều phối kết nối thời gian thực WebSocket và phục vụ giao diện Web cho cả Phụ huynh lẫn Trẻ em.
+FastAPI + SQLite (WAL). Máy chủ lưu chính sách, xác thực 3 vai trò, điều phối WebSocket và phục vụ Dashboard phụ huynh (`/`) cùng Cổng học tập của trẻ (`/child`).
 
----
+## 1. Cấu trúc `app/`
 
-## 1. CHỨC NĂNG CHÍNH
+| File | Vai trò |
+| --- | --- |
+| `config.py` | Đường dẫn dữ liệu, khóa bí mật (`OGK_JWT_SECRET`, `OGK_DATA_KEY` hoặc tự sinh `ogk_secrets.json`) |
+| `security.py` | Argon2id, AES-256-GCM (`EncryptedString`), chữ ký HMAC chính sách, JWT cho Agent |
+| `deps.py` | Phiên cookie + CSRF, Bearer token thiết bị, phân quyền `parent`/`child-view`/`admin`, chống IDOR |
+| `audit.py` | Nhật ký kiểm toán (ai, lúc nào, IP, cũ → mới) |
+| `services.py` | Tính quỹ thời gian, lịch 7×48, chuẩn hóa loại sự kiện, tuần tự hóa & ký chính sách |
+| `routers/auth.py` | Tài khoản phụ huynh, nhiều hồ sơ trẻ, mã ghép đôi, thiết bị |
+| `routers/child_portal.py` | API riêng cho Cổng học tập (`/api/child/*`) |
+| `routers/enroll.py` | Ghép đôi Agent, xoay vòng token, gỡ cài đặt có xác thực |
+| `routers/policy_events.py` | Chính sách, tạm nghỉ, sự kiện 7 trường (idempotency), vòng đời dữ liệu |
+| `routers/commands.py` | Heartbeat, chính sách có chữ ký, WebSocket `/ws/parent`, `/ws/child`, `/ws/agent`, lệnh khẩn |
+| `routers/reports.py` | Top 10 ứng dụng/tên miền, xuất CSV, nhật ký kiểm toán, "Hôm nay em đã dùng gì" |
 
-- **Quản lý Chính sách (Policy Management):** Lưu trữ giới hạn thời gian (Daily Quota), ma trận lịch tuần 168 khung giờ (7 ngày x 24 giờ), danh mục ứng dụng/tên miền cấm, mã PIN mở khóa bảo vệ.
-- **WebSocket Gateway thời gian thực:**
-  - Nhận và điều phối lệnh khẩn cấp (`lock_window`, `unlock_window`, `extend_time`, `request_screen_consent`).
-  - Chuyển tiếp luồng khung hình chia sẻ màn hình trực tiếp dạng nhị phân (**Binary JPEG Blob 15–30 FPS**) từ máy con sang Dashboard phụ huynh với độ trễ thấp.
-- **Phục vụ Giao diện Web (Zero Native Windows):**
-  - **Parent Dashboard (`/`):** Giao diện quản trị toàn diện, bảng điều khiển tối giản, xem màn hình trực tiếp và duyệt yêu cầu thêm giờ.
-  - **Child Web Portal (`/child`):** Không gian học tập an toàn của trẻ, tích hợp In-Page Lock Overlay (tuyệt đối không can thiệp khóa màn hình Windows OS) và xác thực mã PIN bảo mật 100%.
+## 2. API chính
 
----
+| Vai trò | Endpoint |
+| --- | --- |
+| Công khai | `GET /api/auth/status`, `POST /api/auth/register` (chỉ khi chưa có tài khoản), `POST /api/auth/login` |
+| Phụ huynh | `GET/POST /api/children`, `PUT /api/children/{id}`, `POST /api/children/{id}/pairing-code`, `GET /policy/{id}`, `PUT /policy/update`, `POST /policy/pause`, `POST /commands/send`, `GET /reports/summary/{id}`, `GET /reports/export/{id}.csv`, `GET /reports/audit-log/{id}`, `DELETE /data/purge-child/{id}` |
+| Cổng trẻ (`child-view`) | `POST /api/child/pair`, `GET /api/child/session`, `GET /api/child/policy`, `GET/POST /api/child/web-usage`, `POST /api/child/verify-pin`, `POST /api/child/time-requests`, `GET /api/child/today`, `GET /api/child/audit-log` |
+| Agent (Bearer) | `POST /enroll/verify`, `POST /enroll/refresh`, `POST /heartbeat`, `GET /agent/policy`, `POST /events/batch`, `POST /enroll/uninstall-authorize` |
 
-## 2. CÁC API ENDPOINTS CHÍNH
+Mọi yêu cầu ghi bằng cookie phải gửi header `X-CSRF-Token` (giá trị nhận khi đăng nhập hoặc từ `/api/auth/me`, `/api/child/session`).
 
-| Method | Endpoint | Mô tả |
-| :--- | :--- | :--- |
-| `GET` | `/` | Web Dashboard dành cho Phụ huynh |
-| `GET` | `/child` | Trạm học tập Child Web Portal |
-| `GET` | `/policy/{child_id}` | Lấy thông tin chính sách bảo vệ mới nhất |
-| `PUT` | `/policy/{child_id}` | Cập nhật chính sách (168 giờ, app cấm, hạn mức) |
-| `POST` | `/api/settings` | Cập nhật tên bé và mã PIN khóa máy |
-| `POST` | `/api/settings/verify-pin` | Xác thực mã PIN mở khóa (so khớp chính xác với DB) |
-| `POST` | `/commands/send` | Gửi lệnh tức thời (Khóa/Mở khóa/Xem màn hình) |
-| `POST` | `/requests/` | Trẻ gửi yêu cầu xin thêm giờ học |
-| `WS` | `/ws/{device_id}` | WebSocket giao tiếp thời gian thực cho Dashboard / Agent |
-| `WS` | `/ws/child/{guid}` | WebSocket chuyên biệt cho Child Portal (Binary Frame Streaming) |
+## 3. Khởi chạy
 
----
-
-## 3. CÁCH KHỞI CHẠY ĐỘC LẬP
+Dùng launcher ở thư mục gốc: `Start_App.bat` (Windows) hoặc `./Start_App.command` (macOS). Chạy trực tiếp:
 
 ```powershell
-# Chạy trực tiếp qua script runner
 python server/run_server.py
-
-# Hoặc khởi chạy thông qua uvicorn CLI
-uvicorn server.app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-- **Cổng kết nối mặc định:** `8000`
-- **Địa chỉ truy cập phụ huynh:** `http://127.0.0.1:8000`
-- **Địa chỉ truy cập máy con:** `http://127.0.0.1:8000/child`
-- **Tài liệu API Swagger tự động:** `http://127.0.0.1:8000/docs`
-
+| Biến môi trường | Ý nghĩa |
+| --- | --- |
+| `OGK_DATA_DIR` / `OGK_DB_PATH` | Thư mục / file cơ sở dữ liệu |
+| `OGK_HOST`, `OGK_PORT` | Mặc định `127.0.0.1:8000`; máy chủ từ chối mở ra mạng nếu không có TLS |
+| `OGK_SSL_CERTFILE`, `OGK_SSL_KEYFILE` | Bật HTTPS (TLS 1.2+); cookie tự đặt `Secure` |
+| `OGK_COOKIE_SECURE=1` | Ép cookie `Secure` khi chạy sau reverse proxy HTTPS |

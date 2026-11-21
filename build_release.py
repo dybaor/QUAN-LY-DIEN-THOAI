@@ -11,6 +11,10 @@ Mục đích: Đóng gói toàn bộ Agent và DNS Proxy thành file thực thi 
 
 import os
 import sys
+
+for _stream in (sys.stdout, sys.stderr):  # In tiếng Việt được cả khi ghi log ra file / CI
+    if _stream and hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 import shutil
 import subprocess
 import time
@@ -23,217 +27,65 @@ PACKAGE_DIR = BASE_DIR / "dist_package"
 
 # Nội dung các file kịch bản triển khai (.bat) và hướng dẫn (.txt)
 INSTALL_SERVICE_BAT = r"""@echo off
-chcp 65001 >nul
-title [OGK-AGENT] Cai Dat Windows Service
-
-echo ==============================================================================
-echo [OGK-AGENT] KHOI TAO CAI DAT WINDOWS SERVICE: OGKChildAgent (LocalSystem)
-echo ==============================================================================
-
-:: 1. Kiem tra quyen Administrator
+title [OGK-AGENT] Cai Dat Agent
+:: Ghep doi may, cai Windows Service OGKChildAgent (LocalSystem, tu khoi dong lai sau 5s)
+:: va dang ky bieu tuong khay he thong chay khi nguoi dung dang nhap.
 net session >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [ERROR] BAN PHAI CHAY FILE NAY VOI QUYEN "RUN AS ADMINISTRATOR"!
-    echo         Click chuot phai vao file install_service.bat -^> chon "Run as administrator".
-    echo ==============================================================================
+    echo [ERROR] Chuot phai vao file nay va chon "Run as administrator".
     pause
     exit /b 1
 )
-
-:: 2. Kiem tra file thuc thi agent_service.exe
 if not exist "%~dp0agent_service.exe" (
-    echo [ERROR] Khong tim thay file "agent_service.exe" trong thu muc hien tai!
-    echo         Vui long kiem tra lai bo cai dat.
-    echo ==============================================================================
+    echo [ERROR] Khong tim thay agent_service.exe trong thu muc hien tai.
     pause
     exit /b 1
 )
-
-:: 3. Tao thu muc luu tru du lieu %ProgramData%\OGKAgent va phan quyen
-set AGENT_DATA=%ProgramData%\OGKAgent
-if not exist "%AGENT_DATA%" (
-    mkdir "%AGENT_DATA%"
-)
-if not exist "%AGENT_DATA%\logs" (
-    mkdir "%AGENT_DATA%\logs"
-)
+set "AGENT_DATA=%ProgramData%\OGKAgent"
+if not exist "%AGENT_DATA%\logs" mkdir "%AGENT_DATA%\logs"
 icacls "%AGENT_DATA%" /inheritance:r /grant:r "NT AUTHORITY\SYSTEM":(OI)(CI)F /grant:r "BUILTIN\Administrators":(OI)(CI)F >nul 2>&1
 
-:: 4. Dung va xoa phien ban cu cua dich vu neu dang ton tai
-echo [INFO] Kiem tra va go bo phien ban cu neu co...
-net stop OGKChildAgent >nul 2>&1
+echo Mo Dashboard phu huynh ^> "Thiet bi cua tre" ^> "Tao ma ghep doi" (han 10 phut).
+set /p "PAIR_CODE=Nhap ma ghep doi 8 ky tu: "
+"%~dp0agent_service.exe" enroll %PAIR_CODE%
+if %errorlevel% neq 0 (
+    echo [ERROR] Ghep doi that bai. Kiem tra ma va ket noi toi may chu OGK.
+    pause
+    exit /b 1
+)
+
 sc stop OGKChildAgent >nul 2>&1
 sc delete OGKChildAgent >nul 2>&1
 timeout /t 2 /nobreak >nul
-
-:: 5. Dang ky dich vu Windows moi chay duoi quyen LocalSystem
-echo [INFO] Dang dang ky dich vu Windows: OGKChildAgent...
 sc create "OGKChildAgent" binPath= "\"%~dp0agent_service.exe\"" start= auto DisplayName= "OGK Child Monitoring Agent" obj= LocalSystem
 if %errorlevel% neq 0 (
     echo [ERROR] Dang ky dich vu that bai!
     pause
     exit /b 1
 )
+sc description "OGKChildAgent" "Quan ly thoi gian su dung va bao ve thiet bi cho tre em (luon hien bieu tuong khay)." >nul 2>&1
+sc failure "OGKChildAgent" reset= 86400 actions= restart/5000/restart/5000/restart/5000 >nul
 
-:: 6. Dat mo ta cho dich vu
-sc description "OGKChildAgent" "He thong quan ly thoi gian su dung thiet bi cho tre em (Do an Nguoi Ban Dong Hanh). Theo doi tien trinh, dem gio, chan ung dung va dong bo chinh sach." >nul 2>&1
-
-:: 7. Cau hinh co che tu dong khoi phuc khi crash sau 5 giay (Tieu chuan Chuyen de M5)
-echo [INFO] Cau hinh Recovery Options (Tu dong Restart sau 5 giay khi Service gap su co)...
-sc failure "OGKChildAgent" reset= 86400 actions= restart/5000/restart/5000/restart/5000
-
-:: 8. Khoi chay dich vu
-echo [INFO] Dang khoi dong dich vu OGKChildAgent...
+reg add "HKLM\Software\Microsoft\Windows\CurrentVersion\Run" /v OGKTray /t REG_SZ /d "\"%~dp0ogk_tray.exe\"" /f >nul
+start "" "%~dp0ogk_tray.exe"
 sc start OGKChildAgent
 timeout /t 2 /nobreak >nul
-
-:: 9. Kiem tra trang thai va bao cao ket qua
-echo.
-echo ==============================================================================
-echo [THONG TIN CAU HINH PHUC HOI M5]
-sc qfailure OGKChildAgent
-echo ==============================================================================
-echo [TRANG THAI HOAT DONG DICH VU]
-sc query OGKChildAgent
-echo ==============================================================================
-echo [SUCCESS] DICH VU OGKChildAgent DA DUOC CAI DAT VA KHOI DONG THANH CONG!
-echo           Dich vu se tu dong khoi dong cung Windows va chay ngam LocalSystem.
-echo ==============================================================================
+sc query OGKChildAgent | find "STATE"
+echo [SUCCESS] Da cai OGK Agent. Bieu tuong OGK xuat hien o khay he thong.
 pause
 """
 
 UNINSTALL_SERVICE_BAT = r"""@echo off
-chcp 65001 >nul
-title [OGK-AGENT] Go Bo Windows Service
-
-echo ==============================================================================
-echo [OGK-AGENT] GO BO DICH VU: OGKChildAgent
-echo ==============================================================================
-
-:: 1. Kiem tra quyen Administrator
+title [OGK-AGENT] Go Cai Dat Agent
+:: Go cai dat hop phap: bat buoc tai khoan phu huynh, co ghi log cuc bo va audit log tren may chu.
 net session >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [ERROR] BAN PHAI CHAY FILE NAY VOI QUYEN "RUN AS ADMINISTRATOR"!
-    echo         Click chuot phai vao file uninstall_service.bat -^> chon "Run as administrator".
-    echo ==============================================================================
+    echo [ERROR] Chuot phai vao file nay va chon "Run as administrator".
     pause
     exit /b 1
 )
-
-:: 2. Dung dich vu
-echo [INFO] Dang dung dich vu OGKChildAgent...
-net stop OGKChildAgent >nul 2>&1
-sc stop OGKChildAgent >nul 2>&1
-
-:: 3. Xoa dich vu khoi Windows Service Manager
-echo [INFO] Dang xoa dich vu khoi he thong...
-sc delete OGKChildAgent
-if %errorlevel% equ 0 (
-    echo [SUCCESS] Da go bo dich vu OGKChildAgent thanh cong!
-) else (
-    echo [WARNING] Dich vu khong ton tai hoac da duoc go bo truoc do.
-)
-
-echo ==============================================================================
+"%~dp0agent_service.exe" uninstall
 pause
-"""
-
-START_PROXY_BAT = r"""@echo off
-chcp 65001 >nul
-title [OGK-PROXY] DNS Proxy Server (Port 53)
-
-echo ==============================================================================
-echo [OGK-PROXY] KHOI CHAY DNS PROXY SERVER (UDP 127.0.0.1:53)
-echo ==============================================================================
-
-:: 1. Kiem tra quyen Administrator (Bat buoc de lang nghe Port 53)
-net session >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [ERROR] BAN PHAI CHAY FILE NAY VOI QUYEN "RUN AS ADMINISTRATOR"!
-    echo         Viec mo cong UDP 53 tren Windows yeu cau dac quyen Quan tri vien.
-    echo         Click chuot phai vao start_proxy.bat -^> chon "Run as administrator".
-    echo ==============================================================================
-    pause
-    exit /b 1
-)
-
-:: 2. Kiem tra file dns_proxy.exe
-if not exist "%~dp0dns_proxy.exe" (
-    echo [ERROR] Khong tim thay file "dns_proxy.exe" trong thu muc hien tai!
-    pause
-    exit /b 1
-)
-
-:: 3. Chuyen den thu muc chua file va thuc thi
-cd /d "%~dp0"
-echo [INFO] Dang khoi chay DNS Proxy Server...
-echo [INFO] Nhan Ctrl + C de dung tien trinh.
-echo ==============================================================================
-"%~dp0dns_proxy.exe"
-
-pause
-"""
-
-START_APP_BAT = r"""@echo off
-chcp 65001 >nul
-title [OGK-SYSTEM] KHOI CHAY TRON GOI (1-CLICK LAUNCHER)
-
-echo ==============================================================================
-echo [OGK-SYSTEM] KHOI CHAY TRON GOI 1-CLICK (ZERO TERMINAL - 100% WEB APP)
-echo ==============================================================================
-
-cd /d "%~dp0"
-
-:: 1. Khoi dong Server Web Dashboard ngam
-echo [1/3] Dang khoi dong OGK Server (Web Dashboard & API)...
-if exist "%~dp0ogk_server.exe" (
-    start "OGK-Server" /min "%~dp0ogk_server.exe"
-) else (
-    echo [ERROR] Khong tim thay ogk_server.exe!
-)
-
-:: 2. Cho server san sang va mo 2 tab trinh duyet Web: Phu huynh va Tre em
-echo [2/3] Dang ket noi Dashboard: http://127.0.0.1:8000 va http://127.0.0.1:8000/child...
-timeout /t 3 /nobreak >nul
-start http://127.0.0.1:8000
-start http://127.0.0.1:8000/child
-
-:: 3. Khoi chay Agent giam sat ngam (Headless Background Daemon)
-echo [3/3] Dang khoi dong Agent giam sat may con (Chay ngam hoan toan)...
-if exist "%~dp0agent_service.exe" (
-    start "OGK-Agent" /min "%~dp0agent_service.exe" debug
-) else (
-    echo [ERROR] Khong tim thay agent_service.exe!
-)
-
-echo.
-echo ==============================================================================
-echo [SUCCESS] TOAN BO HE THONG DA DUOC KHOI CHAY THANH CONG (100% WEB APP)!
-echo           - Dashboard Phu huynh: http://127.0.0.1:8000 (Tab 1)
-echo           - Cua so Web Tre em:   http://127.0.0.1:8000/child (Tab 2)
-echo           - Agent Giam sat:      Dang chay ngam hoan toan (Chan app SHA-256)
-echo           - De tat toan bo he thong khi dung xong: Chay file Stop_App.bat.
-echo ==============================================================================
-timeout /t 5 >nul
-"""
-
-STOP_APP_BAT = r"""@echo off
-chcp 65001 >nul
-title [OGK-SYSTEM] DUNG TOAN BO HE THONG
-
-echo ==============================================================================
-echo [OGK-SYSTEM] DANG DUNG TOAN BO TIEN TRINH (SERVER, AGENT, DNS PROXY)...
-echo ==============================================================================
-
-taskkill /F /IM ogk_server.exe >nul 2>&1
-taskkill /F /IM agent_service.exe >nul 2>&1
-taskkill /F /IM dns_proxy.exe >nul 2>&1
-taskkill /F /IM child_client.exe >nul 2>&1
-
-echo.
-echo [SUCCESS] Da dung toan bo he thong OGK thanh cong!
-echo ==============================================================================
-timeout /t 3 >nul
 """
 
 HUONG_DAN_CAI_DAT_TXT = """================================================================================
@@ -244,12 +96,14 @@ Thời gian triển khai: Dưới 5 phút | Không yêu cầu cài đặt Python
 
 I. CẤU TRÚC GÓI PHÁT HÀNH (dist_package)
 --------------------------------------------------------------------------------
-├── agent_service.exe      : Ứng dụng Agent giám sát máy con (.exe độc lập, ẩn console)
-├── dns_proxy.exe          : Máy chủ DNS Proxy cục bộ chặn tên miền độc hại (.exe độc lập)
-├── blocklist.json         : Danh sách đen tên miền cấm (SafeSearch, DoH Canary, Web đen)
-├── install_service.bat    : Script 1-Click cài đặt Windows Service chạy ngầm LocalSystem
-├── start_proxy.bat        : Script 1-Click khởi chạy DNS Proxy lắng nghe cổng UDP 53
-├── uninstall_service.bat  : Script 1-Click dừng và gỡ bỏ hoàn toàn Windows Service
+├── Start_App.bat          : Launcher duy nhất (máy chủ, --with-agent, --with-dns, --reset, --stop)
+├── ogk_server.exe         : Máy chủ OGK + Dashboard phụ huynh + Cổng học tập của trẻ
+├── agent_service.exe      : Agent (Windows Service, lệnh enroll / debug / uninstall)
+├── ogk_tray.exe           : Biểu tượng khay hệ thống bắt buộc trong phiên của trẻ
+├── dns_proxy.exe          : Máy chủ DNS Proxy lọc 6 nhóm nội dung, SafeSearch, chặn DoH
+├── blocklist.json         : Danh mục tên miền theo 6 nhóm nội dung
+├── install_service.bat    : Ghép đôi + cài Windows Service + đăng ký khay hệ thống
+├── uninstall_service.bat  : Gỡ cài đặt (bắt buộc tài khoản phụ huynh)
 └── HUONG_DAN_CAI_DAT.txt  : Tài liệu hướng dẫn sử dụng nhanh này
 
 II. YÊU CẦU HỆ THỐNG
@@ -274,16 +128,16 @@ III. CÁC BƯỚC CÀI ĐẶT NHANH (DƯỚI 5 PHÚT)
    Bước 5: Màn hình hiển thị [SUCCESS] là bạn đã hoàn tất!
 
 2. KHỞI CHẠY DNS PROXY CHẶN TRANG WEB ĐỘC HẠI & CƯỠNG CHẾ SAFESEARCH
-   Bước 1: Click chuột phải vào file `start_proxy.bat`.
-   Bước 2: Chọn "Run as administrator".
-   Bước 3: Cửa sổ console sẽ hiện thông báo máy chủ đang lắng nghe tại UDP 127.0.0.1:53.
+   Bước 1: Mở Command Prompt bằng "Run as administrator" trong thư mục gói.
+   Bước 2: Chạy `Start_App.bat --with-dns --server-only` (hoặc bỏ --server-only nếu máy chủ chạy trên máy này).
+   Bước 3: Cửa sổ "OGK DNS Proxy" hiện thông báo đang lắng nghe tại UDP 127.0.0.1:53.
    Bước 4: Đổi DNS của Card mạng (Network Adapter) trên máy tính con:
            + Mở Control Panel -> Network and Sharing Center -> Change adapter settings.
            + Click chuột phải vào Wi-Fi hoặc Ethernet -> Properties.
            + Chọn "Internet Protocol Version 4 (TCP/IPv4)" -> Properties.
            + Chọn "Use the following DNS server addresses":
              Preferred DNS server: 127.0.0.1
-             Alternate DNS server: 8.8.8.8
+             (Không đặt DNS thay thế, nếu không trình duyệt có thể vượt bộ lọc)
            + Nhấn OK để lưu.
    -> Mọi truy vấn tên miền cấm (Porn, Gambling, Violence, DoH Canary) sẽ bị Sinkhole về 0.0.0.0.
 
@@ -304,9 +158,9 @@ IV. CÁCH KIỂM TRA TRẠNG THÁI HOẠT ĐỘNG
 
 V. GỠ BỎ DỊCH VỤ (UNINSTALL)
 --------------------------------------------------------------------------------
-- Khi không còn nhu cầu giám sát hoặc muốn gỡ cài đặt sạch sẽ:
-  Click chuột phải vào file `uninstall_service.bat` -> Chọn "Run as administrator".
-  Dịch vụ `OGKChildAgent` sẽ tự động dừng và bị xóa hoàn toàn khỏi hệ điều hành Windows.
+- Click chuột phải vào file `uninstall_service.bat` -> Chọn "Run as administrator".
+  Nhập tên đăng nhập và mật khẩu phụ huynh. Máy chủ ghi audit log, sau đó dịch vụ
+  `OGKChildAgent`, biểu tượng khay và bộ nhớ đệm được gỡ khỏi máy.
 
 ================================================================================
 Chúc bạn triển khai thành công Hệ thống Quản lý "Người Bạn Đồng Hành" (OGK)!
@@ -355,11 +209,10 @@ def build_agent_service(force: bool = False):
         return
 
     cmd = [
-        "pyinstaller",
+        sys.executable, "-m", "PyInstaller",  # đúng interpreter đã cài thư viện (không dùng pyinstaller tìm theo PATH)
         "--clean",
         "--noconfirm",
         "--onefile",
-        "--noconsole",
         "--name", "agent_service",
         "--paths", str(BASE_DIR / "agent"),
         "--hidden-import=win32timezone",
@@ -367,6 +220,10 @@ def build_agent_service(force: bool = False):
         "--hidden-import=win32service",
         "--hidden-import=win32event",
         "--hidden-import=psutil",
+        "--hidden-import=win32crypt",
+        "--hidden-import=servicemanager",
+        "--hidden-import=win32pipe",
+        "--hidden-import=win32security",
         str(src_file),
     ]
 
@@ -384,6 +241,27 @@ def build_agent_service(force: bool = False):
         log(f"Đóng gói thành công: {output_exe.name} ({size_mb:.2f} MB) trong {elapsed:.1f}s", "SUCCESS")
     else:
         raise FileNotFoundError(f"Không tìm thấy file đích sau khi build: {output_exe}")
+
+
+def build_tray(force: bool = False):
+    """Biên dịch agent/tray_ui.py thành ogk_tray.exe (không console) chạy trong phiên của trẻ."""
+    log("=" * 70)
+    log("1b/4. ĐANG ĐÓNG GÓI BIỂU TƯỢNG KHAY HỆ THỐNG (ogk_tray.exe)...")
+    log("=" * 70)
+    src_file = BASE_DIR / "agent" / "tray_ui.py"
+    output_exe = DIST_DIR / "ogk_tray.exe"
+    latest_src_mtime = max(f.stat().st_mtime for f in (BASE_DIR / "agent").glob("*.py"))
+    if not force and output_exe.exists() and output_exe.stat().st_mtime > latest_src_mtime:
+        log(f"Tái sử dụng bản build hiện có: {output_exe.name}", "SUCCESS")
+        return
+    cmd = [sys.executable, "-m", "PyInstaller", "--clean", "--noconfirm", "--onefile", "--noconsole", "--name", "ogk_tray",
+           "--paths", str(BASE_DIR / "agent"), "--hidden-import=win32pipe", str(src_file)]
+    log(f"Thực thi lệnh: {' '.join(cmd)}")
+    result = subprocess.run(cmd, cwd=str(BASE_DIR), capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if result.returncode != 0 or not output_exe.exists():
+        log(f"Lỗi khi build ogk_tray.exe:\n{result.stderr}", "ERROR")
+        raise RuntimeError("Build ogk_tray.exe thất bại!")
+    log(f"Đóng gói thành công: {output_exe.name}", "SUCCESS")
 
 
 def build_dns_proxy(force: bool = False):
@@ -404,7 +282,7 @@ def build_dns_proxy(force: bool = False):
         return
 
     cmd = [
-        "pyinstaller",
+        sys.executable, "-m", "PyInstaller",  # đúng interpreter đã cài thư viện (không dùng pyinstaller tìm theo PATH)
         "--clean",
         "--noconfirm",
         "--onefile",
@@ -449,7 +327,7 @@ def build_server(force: bool = False):
         return
 
     cmd = [
-        "pyinstaller",
+        sys.executable, "-m", "PyInstaller",  # đúng interpreter đã cài thư viện (không dùng pyinstaller tìm theo PATH)
         "--clean",
         "--noconfirm",
         "--onefile",
@@ -559,6 +437,10 @@ def create_distribution_package():
     log(f"Sao chép {src_agent.name} -> {PACKAGE_DIR.name}/")
     safe_copy_file(src_agent, dst_agent)
 
+    src_tray = DIST_DIR / "ogk_tray.exe"
+    log(f"Sao chép {src_tray.name} -> {PACKAGE_DIR.name}/")
+    safe_copy_file(src_tray, PACKAGE_DIR / "ogk_tray.exe")
+
     # 4. Sao chép dns_proxy.exe
     src_proxy = DIST_DIR / "dns_proxy.exe"
     dst_proxy = PACKAGE_DIR / "dns_proxy.exe"
@@ -580,27 +462,14 @@ def create_distribution_package():
     log(f"Sao chép {src_blocklist.name} -> {PACKAGE_DIR.name}/")
     shutil.copy2(src_blocklist, dst_blocklist)
 
-    # 6. Tạo file Launcher 1-Click: Start_App.bat & Stop_App.bat
-    start_app_path = PACKAGE_DIR / "Start_App.bat"
-    log(f"Tạo file khởi chạy 1-Click: {start_app_path.name}")
-    start_app_path.write_text(START_APP_BAT, encoding="utf-8")
-
-    stop_app_path = PACKAGE_DIR / "Stop_App.bat"
-    log(f"Tạo file dừng hệ thống: {stop_app_path.name}")
-    stop_app_path.write_text(STOP_APP_BAT, encoding="utf-8")
-
-    # 7. Tạo file install_service.bat, start_proxy.bat, uninstall_service.bat
-    install_bat_path = PACKAGE_DIR / "install_service.bat"
-    log(f"Tạo file kịch bản cài đặt: {install_bat_path.name}")
-    install_bat_path.write_text(INSTALL_SERVICE_BAT, encoding="utf-8")
-
-    proxy_bat_path = PACKAGE_DIR / "start_proxy.bat"
-    log(f"Tạo file kịch bản khởi chạy DNS: {proxy_bat_path.name}")
-    proxy_bat_path.write_text(START_PROXY_BAT, encoding="utf-8")
-
-    uninstall_bat_path = PACKAGE_DIR / "uninstall_service.bat"
-    log(f"Tạo file kịch bản gỡ bỏ: {uninstall_bat_path.name}")
-    uninstall_bat_path.write_text(UNINSTALL_SERVICE_BAT, encoding="utf-8")
+    # 7. Launcher duy nhất (dùng chung với bản mã nguồn) và kịch bản cài / gỡ Agent
+    log("Sao chép launcher Start_App.bat")
+    shutil.copy2(BASE_DIR / "Start_App.bat", PACKAGE_DIR / "Start_App.bat")
+    for legacy in ("Stop_App.bat", "start_proxy.bat"):
+        (PACKAGE_DIR / legacy).unlink(missing_ok=True)
+    # File .bat phải là ASCII + CRLF thì cmd.exe mới phân tích đúng nhãn và lệnh
+    (PACKAGE_DIR / "install_service.bat").write_text(INSTALL_SERVICE_BAT, encoding="ascii", newline="\r\n")
+    (PACKAGE_DIR / "uninstall_service.bat").write_text(UNINSTALL_SERVICE_BAT, encoding="ascii", newline="\r\n")
 
     # 8. Tạo file HUONG_DAN_CAI_DAT.txt & HUONG_DAN_CHAY_DONG_GOI.md & README_DEPLOY.md
     guide_path = PACKAGE_DIR / "HUONG_DAN_CAI_DAT.txt"
@@ -658,6 +527,7 @@ def main():
     try:
         check_and_install_dependencies()
         build_agent_service(force=force)
+        build_tray(force=force)
         build_dns_proxy(force=force)
         build_server(force=force)
         create_distribution_package()

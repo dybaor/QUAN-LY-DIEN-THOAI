@@ -213,10 +213,9 @@ class InAppSafeBrowserWindow:
         # Ghi nhận sự kiện duyệt web
         try:
             local_cache.enqueue_event(
-                event_type="blocked_domain" if is_blocked else "web_visited",
+                event_type="blocked_domain" if is_blocked else "domain_query",
                 subject=domain or self.target_url,
                 duration_sec=0,
-                policy_id=1
             )
         except Exception:
             pass

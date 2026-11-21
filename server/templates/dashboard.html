@@ -11,12 +11,12 @@
     <script src="/static/js/time-timeline.js"></script>
     <style>
         .slot-cell {
-            width: 30px;
-            height: 30px;
+            width: 21px;
+            height: 26px;
             cursor: pointer;
             user-select: none;
             transition: all 0.15s ease;
-            font-size: 11px;
+            font-size: 9px;
             font-weight: bold;
             display: flex;
             align-items: center;
@@ -138,7 +138,17 @@
                     <span id="wsIndicator" class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
                     <span id="wsStatusText" class="font-medium text-emerald-100 hidden sm:inline">Đang kết nối...</span>
                 </div>
-                
+
+                <label class="flex items-center space-x-1.5 text-xs" for="childSelector">
+                    <span class="hidden md:inline text-teal-100">Hồ sơ</span>
+                    <select id="childSelector" onchange="switchChild(Number(this.value))"
+                        class="bg-teal-800 border border-teal-600/60 rounded-lg px-2 py-1.5 text-white text-xs font-semibold"></select>
+                </label>
+                <button type="button" onclick="openAddChildModal()" title="Thêm hồ sơ trẻ"
+                    class="bg-white/10 hover:bg-white/20 border border-teal-500/50 rounded-lg px-2 py-1.5 text-xs font-bold">＋</button>
+                <button type="button" id="btnLogout" onclick="logoutParent()" title="Đăng xuất"
+                    class="bg-white/10 hover:bg-white/20 border border-teal-500/50 rounded-lg px-2.5 py-1.5 text-xs font-bold">Đăng xuất</button>
+
                 <!-- NÚT ĐA NHIỆM THÔNG MINH (MULTI-ACTION FLOATING BUTTON / MENU) -->
                 <div class="relative">
                     <button 
@@ -164,14 +174,14 @@
                             <button onclick="lockChildWindow(); toggleQuickActionsMenu();" class="w-full flex items-center space-x-3 px-3 py-2 text-xs font-bold text-rose-600 hover:bg-rose-50 rounded-xl transition text-left">
                                 <span class="text-base">🔒</span>
                                 <div>
-                                    <div>Khóa cửa sổ trẻ</div>
-                                    <div class="text-[10px] text-slate-400 font-normal">Tạm dừng phiên làm việc của bé</div>
+                                    <div>Khóa cổng học tập của trẻ</div>
+                                    <div class="text-[10px] text-slate-400 font-normal">Hiện màn hình khóa trên Cổng học tập ngay</div>
                                 </div>
                             </button>
                             <button onclick="unlockChildWindow(); toggleQuickActionsMenu();" class="w-full flex items-center space-x-3 px-3 py-2 text-xs font-bold text-emerald-600 hover:bg-emerald-50 rounded-xl transition text-left">
                                 <span class="text-base">🔓</span>
                                 <div>
-                                    <div>Mở khóa cửa sổ</div>
+                                    <div>Mở khóa cổng học tập</div>
                                     <div class="text-[10px] text-slate-400 font-normal">Cho phép bé tiếp tục học tập</div>
                                 </div>
                             </button>
@@ -180,6 +190,20 @@
                                 <div>
                                     <div>Yêu cầu xem màn hình</div>
                                     <div class="text-[10px] text-slate-400 font-normal">Gửi xin phép xem màn hình học tập</div>
+                                </div>
+                            </button>
+                            <button onclick="startParentPause(); toggleQuickActionsMenu();" class="w-full flex items-center space-x-3 px-3 py-2 text-xs font-bold text-sky-700 hover:bg-sky-50 rounded-xl transition text-left">
+                                <span class="text-base">⏸️</span>
+                                <div>
+                                    <div>Tạm nghỉ giới hạn 2 giờ</div>
+                                    <div class="text-[10px] text-slate-400 font-normal">Không tính giờ, không khóa theo lịch (có ghi nhật ký)</div>
+                                </div>
+                            </button>
+                            <button onclick="endParentPause(); toggleQuickActionsMenu();" class="w-full flex items-center space-x-3 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 rounded-xl transition text-left">
+                                <span class="text-base">▶️</span>
+                                <div>
+                                    <div>Kết thúc tạm nghỉ</div>
+                                    <div class="text-[10px] text-slate-400 font-normal">Áp dụng lại giới hạn ngay</div>
                                 </div>
                             </button>
                             <div class="px-3 py-1.5 border-t border-slate-100">
@@ -198,7 +222,7 @@
                                     <span class="text-base">🚪</span>
                                     <div>
                                         <div>Đóng phiên làm việc</div>
-                                        <div class="text-[10px] text-slate-400 font-normal">Đóng phiên học tập hiện tại</div>
+                                        <div class="text-[10px] text-slate-400 font-normal">Khóa Cổng học tập đến khi ba mẹ mở</div>
                                     </div>
                                 </button>
                                 <button onclick="applyAllPolicies(); toggleQuickActionsMenu();" class="w-full flex items-center space-x-3 px-3 py-2 text-xs font-bold text-teal-700 hover:bg-teal-50 rounded-xl transition text-left">
@@ -235,8 +259,7 @@
                         </span>
                     </div>
                     <p class="text-xs text-slate-400 mt-0.5 flex items-center space-x-2">
-                        <span>💻 Windows 11 Pro 64-bit</span>
-                        <span>•</span>
+                        <span id="pauseBadge" hidden class="text-sky-700 font-bold">⏸️ Đang tạm nghỉ giới hạn</span>
                         <span class="text-teal-600 font-semibold" id="deviceGuidDisplay">Thiết bị đang đồng bộ</span>
                         <span>•</span>
                         <span>Chính sách v<span id="policyVersionBadge">1</span></span>
@@ -247,7 +270,7 @@
 
         <nav class="section-nav" aria-label="Điều hướng quản lý">
             <a href="#overview">Tổng quan</a><a href="#schedule">Thời gian biểu</a>
-            <a href="#apps">Ứng dụng</a><a href="#activity">Hoạt động</a><a href="#device">Thiết bị</a><a href="#settings">Cài đặt</a>
+            <a href="#apps">Ứng dụng & Web</a><a href="#reports">Báo cáo</a><a href="#activity">Hoạt động</a><a href="#audit">Nhật ký thay đổi</a><a href="#device">Thiết bị</a><a href="#settings">Cài đặt</a>
         </nav>
 
         <!-- BỐ CỤC CHÍNH (RESPONSIVE GRID: XẾP CHỒNG KHI CHIA ĐÔI MÀN HÌNH, 2 CỘT KHI TOÀN MÀN HÌNH) -->
@@ -370,7 +393,7 @@
                         <button type="submit" class="secondary-button">Thêm vào lịch</button>
                     </div>
                     <p class="field-help">
-                        Mỗi khung giờ dài 1 tiếng. Giờ kết thúc sớm hơn giờ bắt đầu sẽ áp dụng
+                        Mỗi khung giờ dài 30 phút. Giờ kết thúc sớm hơn giờ bắt đầu sẽ áp dụng
                         sang ngày tiếp theo, ví dụ tối thứ 2 lúc 22:00 đến sáng thứ 3 lúc 06:00.
                     </p>
                 </fieldset>
@@ -392,16 +415,16 @@
             <div id="schedulePreview" class="ogk-timeline ogk-timeline-preview" hidden></div>
             <div id="scheduleSummary" class="schedule-summary" aria-label="Lịch theo ngày"></div>
             <details class="advanced-schedule">
-                <summary>Xem và chỉnh từng giờ trong tuần</summary>
+                <summary>Xem và chỉnh từng khung 30 phút trong tuần</summary>
                 <p class="field-help">Bấm từng ô hoặc kéo chuột để chỉnh. Dấu ✓ là được dùng, dấu − là giờ nghỉ.</p>
             <!-- Khung Lưới Thời gian biểu -->
             <div class="overflow-x-auto pb-2">
-                <div class="inline-block min-w-[880px] select-none">
-                    <!-- Thanh tiêu đề giờ (00h -> 23h) -->
+                <div class="inline-block min-w-[1180px] select-none">
+                    <!-- Thanh tiêu đề giờ (00h -> 23h, mỗi giờ 2 khung 30 phút) -->
                     <div id="scheduleMatrixHeader" class="flex items-center text-[10px] text-slate-500 font-mono font-bold mb-2">
                         <div class="w-20 flex-shrink-0 text-right pr-3 text-slate-400">Giờ / Thứ</div>
                         <div class="flex flex-1 gap-1 px-1">
-                            <!-- 24 cột giờ sinh tự động -->
+                            <!-- 24 nhãn giờ sinh tự động -->
                         </div>
                     </div>
 
@@ -451,7 +474,48 @@
                     <tbody id="blockedAppsTableBody"></tbody>
                 </table>
             </div>
+            <fieldset id="contentFilterFields" class="space-y-3" disabled>
+                <legend class="text-sm font-bold text-slate-800">Lọc trang web theo nhóm nội dung (DNS)</legend>
+                <p class="field-help">Mặc định theo độ tuổi (6–11 tuổi: chặn mạng xã hội, trò chơi và nội dung không phù hợp). Tên miền chưa phân loại vẫn được ghi nhận để ba mẹ xem.</p>
+                <div id="categoryChecklist" class="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs"></div>
+                <label for="blockedDomainsInput" class="block text-xs font-bold text-slate-600">
+                    Tên miền chặn thêm (mỗi dòng một tên miền, chặn cả tên miền con)
+                    <textarea id="blockedDomainsInput" rows="3" oninput="markScheduleDirty()" placeholder="vi-du-game.com"
+                        class="mt-1 w-full px-3 py-2 border border-slate-300 rounded-xl font-mono text-xs"></textarea>
+                </label>
+            </fieldset>
             <button type="button" class="primary-button" onclick="applyAllPolicies()">Lưu chính sách</button>
+        </section>
+
+        <section id="reports" class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200/80 space-y-4">
+            <div class="section-heading">
+                <h2>Báo cáo hoạt động</h2>
+                <div class="flex items-center gap-2 text-xs">
+                    <select id="reportDays" onchange="loadReports()" class="border border-slate-300 rounded-lg px-2 py-1">
+                        <option value="1">Hôm nay</option>
+                        <option value="7" selected>7 ngày</option>
+                        <option value="30">30 ngày</option>
+                    </select>
+                    <button type="button" class="secondary-button" onclick="exportReportCsv()">Xuất CSV</button>
+                </div>
+            </div>
+            <div id="reportCounters" class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center text-xs"></div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Top 10 ứng dụng</h3>
+                    <table class="w-full text-left text-xs">
+                        <thead class="bg-slate-50 text-slate-500"><tr><th class="p-2">Ứng dụng</th><th class="p-2">Phút</th><th class="p-2">Lượt mở</th></tr></thead>
+                        <tbody id="topAppsTableBody"></tbody>
+                    </table>
+                </div>
+                <div>
+                    <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Top 10 tên miền</h3>
+                    <table class="w-full text-left text-xs">
+                        <thead class="bg-slate-50 text-slate-500"><tr><th class="p-2">Tên miền</th><th class="p-2">Lượt</th><th class="p-2">Bị chặn</th></tr></thead>
+                        <tbody id="topDomainsTableBody"></tbody>
+                    </table>
+                </div>
+            </div>
         </section>
 
         <!-- Thống kê và lịch sử hoạt động -->
@@ -569,6 +633,22 @@
             </div>
         </section>
 
+        <section id="audit" class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200/80 space-y-3">
+            <div class="section-heading">
+                <h2>Nhật ký thay đổi</h2>
+                <button onclick="loadAuditLog()" class="text-xs text-teal-600 font-bold hover:underline">Làm mới ↻</button>
+            </div>
+            <p class="field-help">Mọi thay đổi cấu hình đều được ghi lại (ai, lúc nào, từ đâu, giá trị cũ → mới). Con cũng xem được nhật ký này trong Cổng học tập.</p>
+            <div class="overflow-y-auto max-h-72 rounded-xl border border-slate-200">
+                <table class="w-full text-left text-xs">
+                    <thead class="bg-slate-50 text-slate-500 font-bold uppercase border-b border-slate-200">
+                        <tr><th class="p-2.5">Thời điểm</th><th class="p-2.5">Người thực hiện</th><th class="p-2.5">Thay đổi</th><th class="p-2.5">Chi tiết</th></tr>
+                    </thead>
+                    <tbody id="auditLogTableBody" class="divide-y divide-slate-100"></tbody>
+                </table>
+            </div>
+        </section>
+
             </div> <!-- /Cột trái: leftDashboardCol -->
 
             <!-- CỘT PHẢI: KHUNG CHIẾU CỐ ĐỊNH & THÔNG TIN BẢO MẬT (lg:col-span-5) -->
@@ -658,62 +738,78 @@
                     </div>
                 </div>
 
-                <!-- 2. THẺ CÀI ĐẶT: THÔNG TIN BÉ & MẬT KHẨU KHÓA MÁY (TASK 3) -->
+                <!-- 2. THẺ CÀI ĐẶT: HỒ SƠ TRẺ & MÃ PIN MỞ KHÓA -->
                 <div id="settings" class="bg-white rounded-3xl p-6 shadow-sm border border-slate-200/80 space-y-4">
                     <div class="flex items-center justify-between border-b border-slate-100 pb-3">
                         <div class="flex items-center space-x-2">
                             <span class="text-xl">⚙️</span>
-                            <h3 class="font-bold text-slate-900 text-base">Thông tin & Bảo mật</h3>
+                            <h3 class="font-bold text-slate-900 text-base">Hồ sơ & Bảo mật</h3>
                         </div>
-                        <span class="text-xs bg-teal-50 text-teal-700 font-bold px-2 py-0.5 rounded-md border border-teal-200">Cài đặt máy con</span>
+                        <span class="text-xs bg-teal-50 text-teal-700 font-bold px-2 py-0.5 rounded-md border border-teal-200">Hồ sơ đang chọn</span>
                     </div>
-
                     <div class="space-y-3.5">
-                        <!-- Tên của trẻ -->
-                        <div>
-                            <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">
-                                👤 Tên của trẻ:
+                        <div class="grid grid-cols-3 gap-3">
+                            <label class="col-span-2 block text-xs font-bold uppercase tracking-wider text-slate-500">
+                                👤 Tên của trẻ
+                                <input type="text" id="inputChildName" maxlength="100" placeholder="Ví dụ: Bé An"
+                                    class="mt-1 w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold text-slate-800">
                             </label>
-                            <input 
-                                type="text" 
-                                id="inputChildName" 
-                                value="Bé An"
-                                placeholder="Nhập tên bé (VD: Bé An, Bé Minh)..." 
-                                class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold text-slate-800 focus:bg-white focus:ring-2 focus:ring-teal-500 focus:outline-none transition"
-                            >
-                            <p class="text-[11px] text-slate-400 mt-1">Tên này tự động cập nhật lên thanh tiêu đề cả trang Phụ huynh và trang Con.</p>
+                            <label class="block text-xs font-bold uppercase tracking-wider text-slate-500">
+                                🎂 Tuổi
+                                <input type="number" id="inputChildAge" min="3" max="17" value="10"
+                                    class="mt-1 w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold text-slate-800">
+                            </label>
                         </div>
-
-                        <!-- Mật khẩu / PIN khóa máy -->
                         <div>
-                            <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">
-                                🔑 Mật khẩu / Mã PIN mở khóa (4-6 số):
+                            <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1" for="inputLockPin">
+                                🔑 Đổi mã PIN mở khóa (4–6 chữ số)
                             </label>
                             <div class="relative">
-                                <input 
-                                    type="password" 
-                                    id="inputLockPin" 
-                                    value=""
-                                    maxlength="50"
-                                    placeholder="Nhập mã PIN của phụ huynh..." 
-                                    class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold text-slate-800 font-mono focus:bg-white focus:ring-2 focus:ring-teal-500 focus:outline-none transition pr-10"
-                                >
-                                <button type="button" onclick="togglePinVisibility()" class="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600 text-sm">
-                                    👁️
-                                </button>
+                                <input type="password" id="inputLockPin" value="" maxlength="6" inputmode="numeric" autocomplete="new-password"
+                                    placeholder="Để trống nếu không đổi"
+                                    class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold text-slate-800 font-mono pr-10">
+                                <button type="button" onclick="togglePinVisibility()" class="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600 text-sm">👁️</button>
                             </div>
-                            <p class="text-[11px] text-slate-400 mt-1">Dùng để mở khóa tại chỗ khi máy con bị khóa (trẻ không thể tự mở).</p>
+                            <p class="text-[11px] text-slate-400 mt-1">Mã PIN được băm Argon2id, không ai xem lại được (kể cả máy chủ). Nhập sai 5 lần sẽ bị khóa 15 phút.</p>
                         </div>
-
-                        <!-- Nút lưu thay đổi -->
-                        <button 
-                            onclick="saveChildSettings()" 
-                            class="w-full bg-teal-600 hover:bg-teal-700 active:scale-95 text-white font-bold py-2.5 px-4 rounded-xl shadow-md shadow-teal-600/20 transition flex items-center justify-center space-x-2 text-sm"
-                        >
-                            <span>💾</span>
-                            <span>Lưu thay đổi cài đặt</span>
+                        <button onclick="saveChildSettings()"
+                            class="w-full bg-teal-600 hover:bg-teal-700 active:scale-95 text-white font-bold py-2.5 px-4 rounded-xl shadow-md transition text-sm">
+                            💾 Lưu hồ sơ trẻ
                         </button>
                     </div>
+                </div>
+
+                <!-- 3. THIẾT BỊ & GHÉP ĐÔI -->
+                <div id="pairing" class="bg-white rounded-3xl p-6 shadow-sm border border-slate-200/80 space-y-3">
+                    <h3 class="font-bold text-slate-900 text-base">🔗 Thiết bị của trẻ</h3>
+                    <p class="text-[11px] text-slate-500">Tạo mã 8 ký tự (hạn 10 phút) rồi nhập trên máy của trẻ: khi cài Agent (<code>install_service.bat</code>) hoặc trên màn hình chờ của Cổng học tập.</p>
+                    <div class="flex items-center gap-2">
+                        <button type="button" class="secondary-button" onclick="generatePairingCode()">Tạo mã ghép đôi</button>
+                        <code id="pairingCodeDisplay" class="text-lg font-black tracking-[0.3em] text-teal-700"></code>
+                    </div>
+                    <p id="pairingCodeExpiry" class="text-[11px] text-slate-400"></p>
+                    <ul id="deviceList" class="text-xs space-y-1.5"></ul>
+                    <div class="flex flex-wrap gap-2 pt-1">
+                        <button type="button" class="secondary-button" onclick="openLocalChildPortal()">Mở Cổng học tập trên máy này</button>
+                        <button type="button" class="secondary-button" onclick="revokePortalSessions()">Đăng xuất mọi Cổng học tập</button>
+                    </div>
+                </div>
+
+                <!-- 4. TÀI KHOẢN & DỮ LIỆU -->
+                <div class="bg-white rounded-3xl p-6 shadow-sm border border-slate-200/80 space-y-3">
+                    <details>
+                        <summary class="font-bold text-slate-900 text-sm cursor-pointer">🔐 Đổi mật khẩu phụ huynh</summary>
+                        <div class="space-y-2 mt-3">
+                            <input type="password" id="currentPasswordInput" autocomplete="current-password" placeholder="Mật khẩu hiện tại" class="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm">
+                            <input type="password" id="newPasswordInput" autocomplete="new-password" placeholder="Mật khẩu mới (tối thiểu 10 ký tự)" class="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm">
+                            <button type="button" class="secondary-button" onclick="changeParentPassword()">Đổi mật khẩu</button>
+                        </div>
+                    </details>
+                    <details>
+                        <summary class="font-bold text-rose-700 text-sm cursor-pointer">🗑️ Xóa toàn bộ dữ liệu hoạt động của trẻ</summary>
+                        <p class="text-[11px] text-slate-500 mt-2">Xóa nhật ký, thống kê, yêu cầu xin giờ trên máy chủ và yêu cầu Agent xóa bộ nhớ đệm. Dữ liệu cũ hơn 90 ngày cũng được hệ thống tự động xóa.</p>
+                        <button type="button" class="mt-2 bg-rose-600 hover:bg-rose-700 text-white font-bold py-2 px-4 rounded-xl text-xs" onclick="purgeChildData()">Xóa dữ liệu</button>
+                    </details>
                 </div>
 
             </div> <!-- /Cột phải: rightDashboardCol -->
@@ -776,7 +872,7 @@
                 </div>
                 <div>
                     <h3 class="text-xl font-black text-amber-600">Thông báo: Bé đã dùng hết thời gian!</h3>
-                    <p class="text-xs text-slate-500 mt-1">Toàn bộ ứng dụng trên máy con đã được khóa tự động để bảo vệ sức khỏe của bé</p>
+                    <p class="text-xs text-slate-500 mt-1">Cổng học tập của con đã tự khóa để bảo vệ sức khỏe của bé</p>
                 </div>
                 <div class="bg-amber-50 p-4 rounded-2xl border border-amber-200 text-left space-y-2">
                     <p class="text-xs text-slate-700">
@@ -785,7 +881,7 @@
                     </p>
                     <p class="text-xs text-slate-700">
                         <span class="font-bold text-slate-900">Trạng thái:</span> 
-                        <span class="font-semibold text-rose-600 ml-1">Đã khóa ứng dụng & trang web</span>
+                        <span class="font-semibold text-rose-600 ml-1">Đã khóa Cổng học tập</span>
                     </p>
                     <p class="text-xs text-slate-700">
                         <span class="font-bold text-slate-900">Thời điểm hết giờ:</span> 
@@ -812,75 +908,63 @@
         <!-- ONBOARDING GATE / AUTH MODAL (BẢO VỆ DASHBOARD PHỤ HUYNH)                 -->
         <!-- ========================================================================= -->
         <div id="onboardingModal" class="fixed inset-0 z-[9999999] bg-slate-950/85 backdrop-blur-md hidden items-center justify-center p-4">
-            <div class="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl border border-slate-200 text-center relative">
-                <button onclick="closeOnboardingModal()" class="absolute top-4 right-4 text-slate-400 hover:text-slate-700 bg-slate-100 hover:bg-slate-200 w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition" title="Đóng (Esc)">✕</button>
-                <div class="w-16 h-16 rounded-2xl bg-teal-50 text-teal-600 border border-teal-200 mx-auto flex items-center justify-center text-3xl mb-4 shadow-inner">
-                    🛡️
-                </div>
-                
-                <h2 id="onboardingTitle" class="text-2xl font-black text-slate-900 tracking-tight mb-2">
-                    Thiết lập Hồ sơ Ban đầu
-                </h2>
-                <p id="onboardingDesc" class="text-slate-500 text-sm mb-6 leading-relaxed">
-                    Vui lòng nhập tên của bé và tạo mã PIN bảo vệ để bắt đầu.
-                </p>
-
-                <!-- Form nhập thông tin Onboarding -->
+            <form class="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl border border-slate-200 text-center relative max-h-[95vh] overflow-y-auto"
+                onsubmit="event.preventDefault(); submitOnboardingOrAuth()">
+                <div class="w-16 h-16 rounded-2xl bg-teal-50 text-teal-600 border border-teal-200 mx-auto flex items-center justify-center text-3xl mb-4 shadow-inner">🛡️</div>
+                <h2 id="onboardingTitle" class="text-2xl font-black text-slate-900 tracking-tight mb-2">Đăng nhập phụ huynh</h2>
+                <p id="onboardingDesc" class="text-slate-500 text-sm mb-6 leading-relaxed">Nhập tài khoản phụ huynh để quản lý.</p>
                 <div id="onboardingFields" class="space-y-4 text-left mb-6">
-                    <div id="groupChildName">
-                        <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                            👶 Tên của trẻ:
-                        </label>
-                        <input 
-                            type="text" 
-                            id="onboardingChildName" 
-                            placeholder="Nhập tên bé, ví dụ: Bé Minh, Bé Bắp..." 
-                            class="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500 transition"
-                            value=""
-                        >
-                    </div>
-
                     <div>
-                        <label id="labelLockPin" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                            🔑 Tạo mã PIN quản lý (4-6 chữ số):
-                        </label>
-                        <input 
-                            type="password" 
-                            id="onboardingLockPin" 
-                            maxlength="50"
-                            placeholder="Tạo mã PIN quản lý (4-6 chữ số)..." 
-                            class="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold tracking-widest text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500 transition text-center"
-                            oninput="const ap = document.getElementById('authPinInput'); if(ap) ap.value = this.value;"
-                        >
-                        <input type="hidden" id="authPinInput">
+                        <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5" for="onboardingUsername">👤 Tên đăng nhập</label>
+                        <input type="text" id="onboardingUsername" autocomplete="username" maxlength="50" class="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500 transition">
                     </div>
-
-                    <div id="groupConfirmPin">
-                        <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                            🔒 Xác nhận lại mã PIN:
-                        </label>
-                        <input 
-                            type="password" 
-                            id="onboardingConfirmPin" 
-                            maxlength="50"
-                            placeholder="Xác nhận lại mã PIN..." 
-                            class="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold tracking-widest text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500 transition text-center"
-                        >
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5" for="onboardingPassword">🔐 Mật khẩu</label>
+                        <input type="password" id="onboardingPassword" autocomplete="current-password" maxlength="128" class="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500 transition">
+                    </div>
+                    <div id="groupRegister" class="space-y-4 hidden">
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5" for="onboardingConfirmPassword">🔐 Nhập lại mật khẩu (tối thiểu 10 ký tự)</label>
+                            <input type="password" id="onboardingConfirmPassword" autocomplete="new-password" maxlength="128" class="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500 transition">
+                        </div>
+                        <div class="grid grid-cols-3 gap-3">
+                            <div id="groupChildName" class="col-span-2">
+                                <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5" for="onboardingChildName">👶 Tên của trẻ</label>
+                                <input type="text" id="onboardingChildName" maxlength="100" placeholder="Ví dụ: Bé Minh" class="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500 transition">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5" for="onboardingChildAge">🎂 Tuổi</label>
+                                <input type="number" id="onboardingChildAge" min="3" max="17" value="10" class="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500 transition">
+                            </div>
+                        </div>
+                        <div>
+                            <label id="labelLockPin" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5" for="onboardingLockPin">🔑 Mã PIN mở khóa trên máy trẻ (4–6 chữ số)</label>
+                            <input type="password" id="onboardingLockPin" maxlength="6" inputmode="numeric" autocomplete="off" class="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500 transition tracking-widest text-center">
+                        </div>
+                        <div id="groupConfirmPin">
+                            <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5" for="onboardingConfirmPin">🔒 Xác nhận mã PIN</label>
+                            <input type="password" id="onboardingConfirmPin" maxlength="6" inputmode="numeric" autocomplete="off" class="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500 transition tracking-widest text-center">
+                        </div>
                     </div>
                 </div>
-
-                <!-- Thông báo lỗi modal nếu có -->
                 <p id="onboardingErrorText" class="text-xs text-rose-500 font-bold mb-4 hidden"></p>
-
-                <button 
-                    id="btnSubmitOnboarding" 
-                    onclick="submitOnboardingOrAuth()" 
-                    class="w-full bg-teal-600 hover:bg-teal-700 active:scale-95 text-white font-bold py-3 px-6 rounded-xl shadow-lg shadow-teal-600/30 transition text-sm flex items-center justify-center space-x-2"
-                >
-                    <span>🚀</span>
-                    <span id="onboardingSubmitText">Hoàn tất & Bắt đầu Quản lý</span>
+                <button id="btnSubmitOnboarding" type="submit"
+                    class="w-full bg-teal-600 hover:bg-teal-700 active:scale-95 text-white font-bold py-3 px-6 rounded-xl shadow-lg shadow-teal-600/30 transition text-sm">
+                    <span id="onboardingSubmitText">Đăng nhập</span>
                 </button>
-            </div>
+            </form>
+        </div>
+
+        <div id="addChildModal" class="fixed inset-0 z-[999999] bg-black/75 backdrop-blur-sm hidden items-center justify-center p-4">
+            <form class="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl space-y-3 relative" onsubmit="event.preventDefault(); submitAddChild()">
+                <button type="button" onclick="closeAddChildModal()" class="absolute top-4 right-4 text-slate-400 hover:text-slate-700 bg-slate-100 w-8 h-8 rounded-full text-sm font-bold" title="Đóng (Esc)">✕</button>
+                <h3 class="text-lg font-black text-slate-900">Thêm hồ sơ trẻ</h3>
+                <input type="text" id="addChildName" maxlength="100" placeholder="Tên của trẻ" class="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500 transition">
+                <input type="number" id="addChildAge" min="3" max="17" value="10" class="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500 transition" aria-label="Tuổi">
+                <input type="password" id="addChildPin" maxlength="6" inputmode="numeric" placeholder="Mã PIN mở khóa (4–6 số)" class="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500 transition">
+                <p id="addChildError" class="text-xs text-rose-500 font-bold hidden"></p>
+                <button type="submit" class="w-full bg-teal-600 hover:bg-teal-700 text-white font-bold py-2.5 rounded-xl text-sm">Thêm hồ sơ</button>
+            </form>
         </div>
 
         <!-- ========================================================================= -->
@@ -932,7 +1016,7 @@
                     <span class="text-3xl">🌙</span>
                     <div>
                         <h3 class="text-lg font-bold text-slate-900">Cấu hình Giờ ngủ (Nghỉ đêm)</h3>
-                        <p class="text-xs text-slate-500">Tự động khóa thiết bị ban đêm để bảo vệ thị giác và giấc ngủ của bé</p>
+                        <p class="text-xs text-slate-500">Tự khóa Cổng học tập ban đêm để bảo vệ thị giác và giấc ngủ của bé</p>
                     </div>
                 </div>
                 <div class="space-y-3 text-xs text-slate-700">
@@ -941,7 +1025,7 @@
                             <span class="font-bold">Khung giờ nghỉ đêm:</span>
                             <span class="font-mono font-bold text-indigo-700 bg-white px-2 py-0.5 rounded border border-indigo-200">22:00 — 06:00</span>
                         </div>
-                        <p class="text-[11px] text-slate-500">Trong khung giờ này, máy tính con sẽ tự động khóa và hiện màn hình nghỉ ngơi.</p>
+                        <p class="text-[11px] text-slate-500">Trong khung giờ này, Cổng học tập của con tự khóa và hiện màn hình nghỉ ngơi.</p>
                     </div>
                     <div class="grid grid-cols-2 gap-2 pt-1">
                         <button onclick="setSchedulePreset('bedtime_lock'); saveScheduleMatrixOnly(); closeBedtimeConfigModal();" class="w-full bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-bold py-2.5 rounded-xl transition text-xs shadow-md">
@@ -1062,10 +1146,14 @@
     <!-- JAVASCRIPT LOGIC TRỌN GÓI -->
     <script>
         // State chính của Dashboard
-        let currentChildId = 1;
+        const SLOTS_PER_DAY = 48; // Lịch tuần 7 x 48 khung 30 phút = 336 ký tự
+        let currentChildId = null;
+        let account = null;
+        let csrfToken = null;
         let currentPolicy = null;
-        let scheduleMatrixArray = new Array(168).fill('1'); // 7 x 24 = 168 slot (chuẩn 24h)
-        let blockedAppsList = []; // Mảng đối tượng { name: string, hash: string }
+        let scheduleMatrixArray = new Array(7 * SLOTS_PER_DAY).fill('1');
+        let blockedAppsList = []; // Mảng đối tượng { name: string, hash: string, size?: number } (size giúp Agent chỉ băm file cùng kích thước)
+        let pendingAppFile = null; // { hash, size } của file .exe vừa chọn
         let weeklyChartInstance = null;
         let scheduleDirty = false;
         let scheduleSaving = false;
@@ -1075,6 +1163,297 @@
         let currentLiveBlobUrl = null;
 
         const DAY_NAMES = ["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "Chủ Nhật"];
+
+        // -------------------------------------------------------------
+        // 0. PHIÊN ĐĂNG NHẬP: COOKIE HttpOnly + MÃ CHỐNG CSRF CHO MỌI YÊU CẦU GHI
+        // -------------------------------------------------------------
+        if (typeof window.fetch === 'function' && !window.ogkFetchWrapped) {
+            const nativeFetch = window.fetch.bind(window);
+            window.ogkFetchWrapped = true;
+            window.fetch = async (url, options = {}) => {
+                const method = (options.method || 'GET').toUpperCase();
+                const headers = new Headers(options.headers || {});
+                if (method !== 'GET' && csrfToken) headers.set('X-CSRF-Token', csrfToken);
+                const response = await nativeFetch(url, { ...options, headers, credentials: 'same-origin' });
+                if (response.status === 401 && !String(url).startsWith('/api/auth/')) showAuthModal();
+                return response;
+            };
+        }
+
+        const ACTOR_LABELS = { admin: 'Phụ huynh (quản trị)', parent: 'Phụ huynh', 'child-view': 'Con', device: 'Máy của con', system: 'Hệ thống' };
+
+        function currentChild() {
+            return account?.children?.find(child => child.id === currentChildId) || null;
+        }
+
+        function applyAccount(data) {
+            account = data;
+            csrfToken = data.csrf_token || csrfToken;
+            const ids = (data.children || []).map(child => child.id);
+            if (!ids.includes(currentChildId)) {
+                let saved = null;
+                try { saved = Number(localStorage.getItem('ogk_child_id')); } catch (e) {}
+                currentChildId = ids.includes(saved) ? saved : (ids[0] ?? null);
+            }
+            renderChildSelector();
+            renderChildProfile();
+            renderDeviceList();
+        }
+
+        function renderChildSelector() {
+            const select = document.getElementById('childSelector');
+            if (!select || !account) return;
+            select.innerHTML = account.children.map(child =>
+                `<option value="${child.id}" ${child.id === currentChildId ? 'selected' : ''}>${escapeHtml(child.name || `Trẻ #${child.id}`)}</option>`).join('');
+        }
+
+        function renderChildProfile() {
+            const child = currentChild();
+            if (!child) return;
+            updateChildNameDisplay(child.name);
+            document.getElementById('inputChildName').value = child.name || '';
+            document.getElementById('inputChildAge').value = child.age || 10;
+            document.getElementById('inputLockPin').value = '';
+        }
+
+        async function refreshAccount() {
+            const res = await fetch('/api/auth/me');
+            if (res.ok) applyAccount(await res.json());
+        }
+
+        function refreshAll() {
+            if (!currentChildId) return;
+            loadPolicy();
+            loadRequests();
+            loadDashboardStats();
+            loadViolations();
+            loadAccessHistory();
+            loadMonitoringHistory();
+            loadReports();
+            loadAuditLog();
+            checkOnlineDevices();
+        }
+
+        function switchChild(childId) {
+            if (!childId || childId === currentChildId) return;
+            if (scheduleDirty && !confirm('Có thay đổi lịch chưa lưu. Chuyển hồ sơ sẽ bỏ các thay đổi này?')) {
+                renderChildSelector();
+                return;
+            }
+            currentChildId = childId;
+            try { localStorage.setItem('ogk_child_id', String(childId)); } catch (e) {}
+            scheduleDirty = false;
+            currentPolicy = null;
+            isStreamingActive = false;
+            setMonitorState('idle');
+            renderChildProfile();
+            renderDeviceList();
+            refreshAll();
+        }
+
+        async function logoutParent() {
+            await fetch('/api/auth/logout', { method: 'POST' });
+            account = null;
+            csrfToken = null;
+            if (parentWs) { parentWs.onclose = null; parentWs.close(); }
+            window.location.reload();
+        }
+
+        function openAddChildModal() {
+            document.getElementById('addChildModal').classList.replace('hidden', 'flex');
+        }
+
+        function closeAddChildModal() {
+            document.getElementById('addChildModal')?.classList.replace('flex', 'hidden');
+        }
+
+        async function submitAddChild() {
+            const error = document.getElementById('addChildError');
+            const payload = {
+                name: document.getElementById('addChildName').value.trim(),
+                age: Number(document.getElementById('addChildAge').value),
+                pin: document.getElementById('addChildPin').value.trim(),
+            };
+            const res = await fetch('/api/children', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                error.innerText = formatError(data);
+                error.classList.remove('hidden');
+                return;
+            }
+            error.classList.add('hidden');
+            closeAddChildModal();
+            await refreshAccount();
+            switchChild(data.id);
+            showToast(`Đã thêm hồ sơ "${data.name}"`, 'success');
+        }
+
+        function formatError(data) {
+            if (Array.isArray(data?.detail)) return data.detail.map(item => item.msg).join('; ');
+            return data?.detail || data?.message || 'Có lỗi xảy ra, vui lòng thử lại.';
+        }
+
+        // -------------------------------------------------------------
+        // NHÓM NỘI DUNG & TÊN MIỀN CHẶN (DNS PROXY)
+        // -------------------------------------------------------------
+        let selectedCategories = [];
+
+        function renderContentFilters() {
+            if (!currentPolicy) return;
+            selectedCategories = (currentPolicy.blocked_categories || '').split(',').filter(Boolean);
+            const categories = account?.categories || {};
+            const list = document.getElementById('categoryChecklist');
+            if (list) {
+                list.innerHTML = Object.entries(categories).map(([key, label]) => `
+                    <label class="flex items-center gap-2 border border-slate-200 rounded-lg px-2 py-1.5">
+                        <input type="checkbox" value="${key}" ${selectedCategories.includes(key) ? 'checked' : ''}
+                            onchange="toggleCategory('${key}', this.checked)"> Chặn ${escapeHtml(label)}
+                    </label>`).join('');
+            }
+            const domains = document.getElementById('blockedDomainsInput');
+            if (domains) domains.value = (currentPolicy.blocked_domains || '').split(/[\s,]+/).filter(Boolean).join('\n');
+        }
+
+        function toggleCategory(key, checked) {
+            selectedCategories = checked ? [...new Set([...selectedCategories, key])] : selectedCategories.filter(item => item !== key);
+            markScheduleDirty();
+        }
+
+        function collectBlockedDomains() {
+            const input = document.getElementById('blockedDomainsInput');
+            if (!input) return currentPolicy?.blocked_domains || '';
+            return input.value.split(/[\s,]+/).map(item => item.trim().toLowerCase()).filter(Boolean).join(',');
+        }
+
+        // -------------------------------------------------------------
+        // BÁO CÁO TOP 10 & NHẬT KÝ THAY ĐỔI
+        // -------------------------------------------------------------
+        async function loadReports() {
+            if (!currentChildId) return;
+            try {
+                const days = document.getElementById('reportDays')?.value || 7;
+                const res = await fetch(`/reports/summary/${currentChildId}?days=${days}`);
+                if (!res.ok) return;
+                const data = await res.json();
+                const c = data.counters;
+                document.getElementById('reportCounters').innerHTML = [
+                    ['Lần bị chặn', c.blocked_total], ['Lần khóa', c.locks],
+                    ['Yêu cầu xin giờ', c.requests_total], ['Cảnh báo sắp hết giờ', c.quota_warnings],
+                ].map(([label, value]) => `<div class="bg-slate-50 rounded-xl p-3 border border-slate-200"><div class="text-xl font-black text-slate-800">${value}</div><div class="text-slate-500">${label}</div></div>`).join('');
+                const empty = '<tr><td colspan="3" class="p-2 text-slate-400 italic">Chưa có dữ liệu</td></tr>';
+                document.getElementById('topAppsTableBody').innerHTML = data.top_apps.map(row =>
+                    `<tr class="border-b border-slate-100"><td class="p-2 font-semibold">${escapeHtml(row.name)}</td><td class="p-2">${row.minutes}</td><td class="p-2">${row.opens}</td></tr>`).join('') || empty;
+                document.getElementById('topDomainsTableBody').innerHTML = data.top_domains.map(row =>
+                    `<tr class="border-b border-slate-100"><td class="p-2 font-mono">${escapeHtml(row.domain)}</td><td class="p-2">${row.visits}</td><td class="p-2 ${row.blocked ? 'text-rose-600 font-bold' : ''}">${row.blocked}</td></tr>`).join('') || empty;
+            } catch (e) {}
+        }
+
+        function exportReportCsv() {
+            if (!currentChildId) return;
+            const days = document.getElementById('reportDays')?.value || 7;
+            window.location.href = `/reports/export/${currentChildId}.csv?days=${days}`;
+        }
+
+        async function loadAuditLog() {
+            if (!currentChildId) return;
+            try {
+                const res = await fetch(`/reports/audit-log/${currentChildId}`);
+                if (!res.ok) return;
+                const entries = await res.json();
+                document.getElementById('auditLogTableBody').innerHTML = entries.map(entry => {
+                    const detail = [entry.old_value && `Cũ: ${entry.old_value}`, entry.new_value && `Mới: ${entry.new_value}`].filter(Boolean).join(' → ');
+                    return `<tr><td class="p-2.5 whitespace-nowrap">${new Date(entry.ts).toLocaleString('vi-VN')}</td>
+                        <td class="p-2.5">${escapeHtml(entry.actor_name || ACTOR_LABELS[entry.actor_role] || entry.actor_role)}<div class="text-[10px] text-slate-400">${escapeHtml(entry.client_ip || '')}</div></td>
+                        <td class="p-2.5 font-semibold">${escapeHtml(entry.action_label)}</td>
+                        <td class="p-2.5 font-mono text-[10px] break-all">${escapeHtml(detail).slice(0, 400)}</td></tr>`;
+                }).join('') || '<tr><td colspan="4" class="p-3 text-center text-slate-400 italic">Chưa có thay đổi nào</td></tr>';
+            } catch (e) {}
+        }
+
+        // -------------------------------------------------------------
+        // GHÉP ĐÔI THIẾT BỊ & DỮ LIỆU
+        // -------------------------------------------------------------
+        async function generatePairingCode() {
+            const res = await fetch(`/api/children/${currentChildId}/pairing-code`, { method: 'POST' });
+            const data = await res.json();
+            if (!res.ok) return showToast(formatError(data), 'error');
+            document.getElementById('pairingCodeDisplay').innerText = data.code;
+            document.getElementById('pairingCodeExpiry').innerText = `Hết hạn lúc ${new Date(data.expires_at).toLocaleTimeString('vi-VN')} · dùng một lần`;
+        }
+
+        function renderDeviceList() {
+            const list = document.getElementById('deviceList');
+            const child = currentChild();
+            if (!list || !child) return;
+            const devices = child.devices.map(device => `
+                <li class="flex items-center justify-between bg-slate-50 rounded-lg px-3 py-2 border border-slate-200">
+                    <span>💻 <b>${escapeHtml(device.name)}</b> · ${device.online ? '<span class="text-emerald-600">trực tuyến</span>' : 'ngoại tuyến'}
+                        ${device.ui_present ? '' : '<span class="text-amber-600"> · không thấy biểu tượng khay (đã tạm dừng giám sát)</span>'}</span>
+                    <button class="text-rose-600 font-bold" onclick="removeDevice('${device.id}')">Gỡ</button>
+                </li>`);
+            list.innerHTML = devices.join('') || '<li class="text-slate-400 italic">Chưa ghép đôi Agent nào.</li>';
+        }
+
+        async function removeDevice(deviceId) {
+            if (!confirm('Gỡ ghép đôi thiết bị này? Agent trên máy sẽ ngừng nhận chính sách.')) return;
+            const res = await fetch(`/api/children/${currentChildId}/devices/${deviceId}`, { method: 'DELETE' });
+            if (res.ok) { await refreshAccount(); showToast('Đã gỡ ghép đôi thiết bị.', 'success'); }
+        }
+
+        async function openLocalChildPortal() {
+            const res = await fetch(`/api/children/${currentChildId}/local-session`, { method: 'POST' });
+            if (!res.ok) return showToast('Không mở được Cổng học tập.', 'error');
+            window.open('/child', '_blank', 'noopener');
+        }
+
+        async function revokePortalSessions() {
+            if (!confirm('Đăng xuất mọi Cổng học tập của trẻ? Cần nhập mã ghép đôi mới để dùng lại.')) return;
+            const res = await fetch(`/api/children/${currentChildId}/portal-logout`, { method: 'POST' });
+            if (res.ok) showToast('Đã đăng xuất mọi Cổng học tập.', 'success');
+        }
+
+        async function purgeChildData() {
+            if (!confirm('XÓA TOÀN BỘ dữ liệu hoạt động của trẻ trên máy chủ và bộ nhớ đệm của Agent? Không thể hoàn tác.')) return;
+            const res = await fetch(`/data/purge-child/${currentChildId}`, { method: 'DELETE' });
+            const data = await res.json();
+            if (!res.ok) return showToast(formatError(data), 'error');
+            showToast(data.message, 'success');
+            refreshAll();
+        }
+
+        async function startParentPause() {
+            if (!currentChildId || !confirm('Tạm nghỉ giới hạn thời gian 2 giờ? Thao tác được ghi vào nhật ký mà con xem được.')) return;
+            const res = await fetch('/policy/pause', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ child_id: currentChildId, minutes: 120 }),
+            });
+            if (res.ok) { showToast('Đã bật tạm nghỉ giới hạn trong 2 giờ.', 'success'); refreshAll(); }
+        }
+
+        async function endParentPause() {
+            if (!currentChildId) return;
+            const res = await fetch(`/policy/pause/${currentChildId}`, { method: 'DELETE' });
+            if (res.ok) { showToast('Đã kết thúc tạm nghỉ.', 'success'); refreshAll(); }
+        }
+
+        async function changeParentPassword() {
+            const res = await fetch('/api/auth/change-password', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    current_password: document.getElementById('currentPasswordInput').value,
+                    new_password: document.getElementById('newPasswordInput').value,
+                }),
+            });
+            const data = await res.json();
+            if (!res.ok) return showToast(formatError(data), 'error');
+            applyAccount(data);
+            document.getElementById('currentPasswordInput').value = '';
+            document.getElementById('newPasswordInput').value = '';
+            showToast('Đã đổi mật khẩu. Các phiên đăng nhập khác đã bị hủy.', 'success');
+        }
+
 
         // -------------------------------------------------------------
         // 1. TÍNH MÃ BĂM SHA-256 BẰNG WEB CRYPTO API TRÊN TRÌNH DUYỆT (100% ZERO-CLI)
@@ -1097,6 +1476,7 @@
                 const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 
                 document.getElementById('appHashInput').value = hashHex;
+                pendingAppFile = { hash: hashHex, size: file.size };
                 document.getElementById('fileBtnText').innerText = `✓ Đã chọn: ${file.name}`;
             } catch (err) {
                 showToast("Lỗi khi đọc file và tính mã băm SHA-256: " + err, "error");
@@ -1120,7 +1500,10 @@
                 return;
             }
 
-            blockedAppsList.push({ name, hash });
+            const entry = { name, hash };
+            if (pendingAppFile && pendingAppFile.hash === hash) entry.size = pendingAppFile.size;
+            pendingAppFile = null;
+            blockedAppsList.push(entry);
             markScheduleDirty();
             renderBlockedAppsTable();
 
@@ -1166,19 +1549,27 @@
         }
 
         // -------------------------------------------------------------
-        // 2. MA TRẬN LỊCH TUẦN 7x24 KÉO THẢ (24 KHUNG GIỜ MỖI NGÀY)
+        // 2. MA TRẬN LỊCH TUẦN 7x48 (MỖI KHUNG 30 PHÚT)
         // -------------------------------------------------------------
+        function slotLabel(slot) {
+            const minutes = (slot * 30) % 1440;
+            return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+        }
+
+        function slotRangeLabel(slot) {
+            return `${slotLabel(slot)}–${slot % SLOTS_PER_DAY === SLOTS_PER_DAY - 1 ? '24:00' : slotLabel(slot + 1)}`;
+        }
+
         function initScheduleGrid() {
             const container = document.getElementById('scheduleMatrixGrid');
             const headerContainer = document.querySelector('#scheduleMatrixHeader div.flex-1');
             if (!container) return;
 
-            // Render Header 24 cột giờ
             if (headerContainer) {
                 headerContainer.innerHTML = '';
                 for (let h = 0; h < 24; h++) {
                     const hSpan = document.createElement('div');
-                    hSpan.className = 'w-[30px] text-center text-[10px] text-slate-500 font-mono font-bold flex-shrink-0';
+                    hSpan.className = 'w-[48px] text-left text-[10px] text-slate-500 font-mono font-bold flex-shrink-0';
                     hSpan.innerText = `${h}h`;
                     headerContainer.appendChild(hSpan);
                 }
@@ -1197,10 +1588,10 @@
                 row.appendChild(label);
 
                 const slotsWrapper = document.createElement('div');
-                slotsWrapper.className = 'flex flex-1 gap-1 bg-slate-100 p-1.5 rounded-xl border border-slate-200/80';
+                slotsWrapper.className = 'flex flex-1 gap-[3px] bg-slate-100 p-1.5 rounded-xl border border-slate-200/80';
 
-                for (let h = 0; h < 24; h++) {
-                    const idx = day * 24 + h;
+                for (let s = 0; s < SLOTS_PER_DAY; s++) {
+                    const idx = day * SLOTS_PER_DAY + s;
                     const cell = document.createElement('button');
                     cell.type = 'button';
                     cell.disabled = !currentPolicy;
@@ -1209,16 +1600,11 @@
                     cell.dataset.index = idx;
                     cell.innerText = isAllowed ? '✓' : '−';
                     cell.setAttribute('aria-pressed', String(isAllowed));
-
-                    // Tooltip chi tiết
-                    const timeStr = `${String(h).padStart(2, '0')}:00 - ${String(h + 1).padStart(2, '0')}:00`;
-                    cell.title = `${DAY_NAMES[day]} khung giờ ${timeStr}: ${isAllowed ? 'Được dùng' : 'Giờ nghỉ'}`;
+                    cell.title = `${DAY_NAMES[day]} ${slotRangeLabel(s)}: ${isAllowed ? 'Được dùng' : 'Giờ nghỉ'}`;
                     cell.setAttribute('aria-label', cell.title);
                     cell.addEventListener('click', (event) => {
                         if (event.detail === 0) setSlotState(cell, idx, scheduleMatrixArray[idx] === '1' ? '0' : '1');
                     });
-
-                    // Xử lý click và Kéo rê chuột (Mouse Down + Mouse Enter + Mouse Up)
                     cell.addEventListener('mousedown', (e) => {
                         if (e.button !== 0) return;
                         e.preventDefault();
@@ -1226,20 +1612,14 @@
                         dragTargetState = scheduleMatrixArray[idx] === '1' ? '0' : '1';
                         setSlotState(cell, idx, dragTargetState);
                     });
-
                     cell.addEventListener('mouseenter', () => {
-                        if (isMouseDown) {
-                            setSlotState(cell, idx, dragTargetState);
-                        }
+                        if (isMouseDown) setSlotState(cell, idx, dragTargetState);
                     });
-
                     slotsWrapper.appendChild(cell);
                 }
                 row.appendChild(slotsWrapper);
                 container.appendChild(row);
             }
-
-
         }
 
         document.addEventListener('mouseup', () => { isMouseDown = false; });
@@ -1248,9 +1628,7 @@
         function setSlotState(cell, idx, state) {
             scheduleMatrixArray[idx] = state;
             cell.setAttribute('aria-pressed', String(state === '1'));
-            const day = Math.floor(idx / 24);
-            const hour = idx % 24;
-            cell.title = `${DAY_NAMES[day]} ${hour}:00–${hour + 1}:00 · ${state === '1' ? 'Được dùng' : 'Giờ nghỉ'}`;
+            cell.title = `${DAY_NAMES[Math.floor(idx / SLOTS_PER_DAY)]} ${slotRangeLabel(idx % SLOTS_PER_DAY)} · ${state === '1' ? 'Được dùng' : 'Giờ nghỉ'}`;
             cell.setAttribute('aria-label', cell.title);
             markScheduleDirty();
             renderScheduleSummary();
@@ -1265,28 +1643,26 @@
             }
         }
 
+        function setDaySlots(day, fromSlot, toSlot, state) {
+            for (let s = fromSlot; s < toSlot; s++) scheduleMatrixArray[day * SLOTS_PER_DAY + s] = state;
+        }
+
         function setSchedulePreset(type) {
             if (!currentPolicy) return;
             markScheduleDirty();
             if (type === 'all_allow') {
                 scheduleMatrixArray.fill('1');
             } else if (type === 'bedtime_lock') {
-                // Khóa 22:00 -> 06:00 mỗi ngày
+                // Nghỉ 22:00 -> 06:00 mỗi ngày
                 for (let d = 0; d < 7; d++) {
-                    for (let h = 0; h < 24; h++) {
-                        if (h >= 22 || h < 6) {
-                            scheduleMatrixArray[d * 24 + h] = '0';
-                        }
-                    }
+                    setDaySlots(d, 44, 48, '0');
+                    setDaySlots(d, 0, 12, '0');
                 }
             } else if (type === 'school_lock') {
-                // Khóa 08:00 - 11:00 và 14:00 - 17:00 các ngày thường (Thứ 2 - 6)
+                // Nghỉ 08:00 - 11:00 và 14:00 - 17:00 các ngày thường (Thứ 2 - 6)
                 for (let d = 0; d < 5; d++) {
-                    for (let h = 0; h < 24; h++) {
-                        if ((h >= 8 && h < 11) || (h >= 14 && h < 17)) {
-                            scheduleMatrixArray[d * 24 + h] = '0';
-                        }
-                    }
+                    setDaySlots(d, 16, 22, '0');
+                    setDaySlots(d, 28, 34, '0');
                 }
             }
             initScheduleGrid();
@@ -1307,16 +1683,17 @@
             document.getElementById('schedulePreview').hidden = !saved || saved === draft;
             if (saved && saved !== draft) OgkTimeline.render('schedulePreview', saved, draft);
             document.getElementById('scheduleSummary').innerHTML = DAY_NAMES.map((day, index) => {
-                const slots = scheduleMatrixArray.slice(index * 24, index * 24 + 24);
-                const changed = slots.map((slot, hour) => Boolean(saved) && slot !== saved[index * 24 + hour]);
+                const first = index * SLOTS_PER_DAY;
+                const slots = scheduleMatrixArray.slice(first, first + SLOTS_PER_DAY);
+                const changed = slots.map((slot, i) => Boolean(saved) && slot !== saved[first + i]);
                 const ranges = [];
                 let start = 0;
-                for (let hour = 1; hour <= 24; hour++) {
-                    if (hour === 24 || slots[hour] !== slots[start] || changed[hour] !== changed[start]) {
+                for (let i = 1; i <= SLOTS_PER_DAY; i++) {
+                    if (i === SLOTS_PER_DAY || slots[i] !== slots[start] || changed[i] !== changed[start]) {
                         const label = slots[start] === '1' ? 'Được dùng' : 'Giờ nghỉ';
-                        const time = `${String(start).padStart(2, '0')}:00–${String(hour).padStart(2, '0')}:00`;
+                        const time = `${slotLabel(start)}–${i === SLOTS_PER_DAY ? '24:00' : slotLabel(i)}`;
                         ranges.push(`<span class="schedule-range ${slots[start] === '1' ? 'allowed' : 'rest'}${changed[start] ? ' ogk-schedule-changed' : ''}">${label} <b>${time}</b>${changed[start] ? ' · Đã sửa' : ''}</span>`);
-                        start = hour;
+                        start = i;
                     }
                 }
                 return `<div class="schedule-day"><strong>${day}</strong><div>${ranges.join('')}</div></div>`;
@@ -1334,16 +1711,11 @@
                 return;
             }
             for (const day of days) {
-                for (let hour = 0; hour < 24; hour++) {
-                    if (end > start && hour >= start && hour < end) {
-                        scheduleMatrixArray[day * 24 + hour] = state;
-                    }
-                    if (end < start && hour >= start) {
-                        scheduleMatrixArray[day * 24 + hour] = state;
-                    }
-                    if (end < start && hour < end) {
-                        scheduleMatrixArray[((day + 1) % 7) * 24 + hour] = state;
-                    }
+                if (end > start) {
+                    setDaySlots(day, start, end, state);
+                } else {
+                    setDaySlots(day, start, SLOTS_PER_DAY, state);
+                    setDaySlots((day + 1) % 7, 0, end, state);
                 }
             }
             markScheduleDirty();
@@ -1366,7 +1738,8 @@
                 daily_quota_weekend_min: Number(document.getElementById('weekendSlider').value),
                 schedule_matrix: scheduleMatrixArray.join(''),
                 blocked_apps: JSON.stringify(blockedAppsList),
-                blocked_domains: currentPolicy.blocked_domains || ''
+                blocked_domains: collectBlockedDomains(),
+                blocked_categories: selectedCategories.join(',')
             };
             const button = document.getElementById('saveScheduleButton');
             scheduleSaving = true;
@@ -1380,7 +1753,9 @@
                 const unchanged = scheduleMatrixArray.join('') === payload.schedule_matrix &&
                     Number(document.getElementById('weekdaySlider').value) === payload.daily_quota_weekday_min &&
                     Number(document.getElementById('weekendSlider').value) === payload.daily_quota_weekend_min &&
-                    JSON.stringify(blockedAppsList) === payload.blocked_apps;
+                    JSON.stringify(blockedAppsList) === payload.blocked_apps &&
+                    collectBlockedDomains() === payload.blocked_domains &&
+                    selectedCategories.join(',') === payload.blocked_categories;
                 if (unchanged) {
                     scheduleDirty = false;
                     document.getElementById('scheduleSaveStatus').innerText = 'Đã lưu lịch';
@@ -1502,11 +1877,16 @@
                 currentPolicy = await res.json();
                 OgkTimeline.render('todayTimeline', currentPolicy.schedule_matrix);
                 if (scheduleDirty) renderScheduleSummary();
-                for (const id of ['weekdaySlider', 'weekendSlider', 'scheduleEditorFields', 'schedulePreset', 'blockedAppFields']) {
+                for (const id of ['weekdaySlider', 'weekendSlider', 'scheduleEditorFields', 'schedulePreset', 'blockedAppFields', 'contentFilterFields']) {
                     document.getElementById(id).disabled = false;
                 }
                 document.getElementById('saveScheduleButton').disabled = scheduleSaving;
                 document.getElementById('policyVersionBadge').innerText = currentPolicy.version;
+                const pauseBadge = document.getElementById('pauseBadge');
+                if (pauseBadge) {
+                    pauseBadge.hidden = !currentPolicy.paused_until;
+                    if (currentPolicy.paused_until) pauseBadge.innerText = `⏸️ Tạm nghỉ giới hạn đến ${new Date(currentPolicy.paused_until).toLocaleTimeString('vi-VN')}`;
+                }
 
                 if (!scheduleDirty) {
                     // 1. Quotas
@@ -1514,17 +1894,10 @@
                     document.getElementById('weekendSlider').value = currentPolicy.daily_quota_weekend_min;
                     updateQuotaDisplay();
     
-                    // 2. Ma trận lịch tuần (Chuẩn 168 slot 24h & tự động convert nếu gặp 336 slot cũ)
-                    if (currentPolicy.schedule_matrix && currentPolicy.schedule_matrix.length === 168) {
-                        scheduleMatrixArray = currentPolicy.schedule_matrix.split('');
-                    } else if (currentPolicy.schedule_matrix && currentPolicy.schedule_matrix.length === 336) {
-                        scheduleMatrixArray = [];
-                        for (let i = 0; i < 168; i++) {
-                            scheduleMatrixArray.push(currentPolicy.schedule_matrix[i * 2] === '1' && currentPolicy.schedule_matrix[i * 2 + 1] === '1' ? '1' : '0');
-                        }
-                    } else {
-                        scheduleMatrixArray = new Array(168).fill('1');
-                    }
+                    // 2. Ma trận lịch tuần 7 x 48 (lịch 168 ký tự cũ được nhân đôi từng giờ)
+                    const matrix = OgkTimeline.normalize(currentPolicy.schedule_matrix);
+                    scheduleMatrixArray = matrix ? matrix.split('') : new Array(7 * SLOTS_PER_DAY).fill('1');
+                    renderContentFilters();
                     initScheduleGrid();
                     document.getElementById('scheduleSaveStatus').innerText = 'Đã đồng bộ';
                 }
@@ -1794,14 +2167,13 @@
         // 9. LỆNH ĐIỀU KHIỂN CỬA SỔ TRẺ QUA WEBSOCKET (CÔ LẬP KHÔNG ẢNH HƯỞNG WINDOWS)
         // -------------------------------------------------------------
         async function lockChildWindow() {
-            if (!confirm("BẠN CÓ CHẮC MUỐN KHÓA CỬA SỔ TRẺ EM NGAY LẬP TỨC?\nCửa sổ ứng dụng của trẻ sẽ lập tức bị khóa toàn màn hình (< 1s) mà KHÔNG làm khóa tài khoản Windows của bạn.")) return;
+            if (!confirm("Khóa Cổng học tập của trẻ ngay?\nCổng học tập hiện màn hình khóa (không khóa tài khoản Windows). Sự kiện được ghi vào nhật ký.")) return;
 
             try {
                 const res = await fetch('/commands/send', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        device_id: 'auto',
                         action: 'lock_window',
                         child_id: currentChildId,
                         reason: 'Phụ huynh ấn khóa cửa sổ từ Web Dashboard'
@@ -1824,7 +2196,6 @@
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        device_id: 'auto',
                         action: 'unlock_window',
                         child_id: currentChildId,
                         reason: 'Phụ huynh mở khóa cửa sổ từ Web Dashboard'
@@ -1842,15 +2213,15 @@
         }
 
         async function closeChildSession() {
-            if (!confirm("BẠN CÓ CHẮC MUỐN ĐÓNG PHIÊN LÀM VIỆC CỦA TRẺ?\nỨng dụng của bé sẽ đóng an toàn mà TUYỆT ĐỐI KHÔNG làm tắt máy tính Windows của bạn.")) return;
+            if (!confirm("Đóng phiên làm việc của trẻ?\nCổng học tập hiện màn hình khóa cho tới khi ba mẹ mở khóa (không tắt máy, không khóa Windows).")) return;
 
             try {
                 const res = await fetch('/commands/send', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        device_id: 'auto',
                         action: 'close_session',
+                        child_id: currentChildId,
                         reason: 'Phụ huynh đóng phiên làm việc từ Dashboard'
                     })
                 });
@@ -1954,57 +2325,24 @@
         // -------------------------------------------------------------
         // CÀI ĐẶT THÔNG TIN BÉ & MÃ PIN KHÓA MÁY (TASK 3)
         // -------------------------------------------------------------
-        async function loadChildSettings() {
-            try {
-                const res = await fetch(`/api/settings/${currentChildId}`);
-                if (res.ok) {
-                    const data = await res.json();
-                    if (data.child_name) {
-                        const input = document.getElementById('inputChildName');
-                        if (input) input.value = data.child_name;
-                        updateChildNameDisplay(data.child_name);
-                    }
-                    if (data.lock_pin) {
-                        const pinInput = document.getElementById('inputLockPin');
-                        if (pinInput) pinInput.value = data.lock_pin;
-                    }
-                }
-            } catch (e) {
-                console.warn("Không thể nạp cài đặt bé:", e);
-            }
-        }
-
         async function saveChildSettings() {
             const name = (document.getElementById('inputChildName')?.value || '').trim();
+            const age = Number(document.getElementById('inputChildAge')?.value || 10);
             const pin = (document.getElementById('inputLockPin')?.value || '').trim();
-            if (!name) {
-                showToast("Vui lòng nhập tên của trẻ!", "warning");
-                return;
-            }
-            if (!pin || pin.length < 4) {
-                showToast("Mã PIN phải có từ 4 đến 6 ký tự!", "warning");
-                return;
-            }
-
+            if (!name) return showToast("Vui lòng nhập tên của trẻ!", "warning");
+            if (pin && !/^\d{4,6}$/.test(pin)) return showToast("Mã PIN phải gồm 4 đến 6 chữ số!", "warning");
             try {
-                const res = await fetch('/api/settings/update', {
-                    method: 'POST',
+                const res = await fetch(`/api/children/${currentChildId}`, {
+                    method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        child_id: currentChildId,
-                        child_name: name,
-                        lock_pin: pin
-                    })
+                    body: JSON.stringify({ name, age, ...(pin ? { pin } : {}) })
                 });
                 const data = await res.json();
-                if (res.ok && data.status === 'success') {
-                    updateChildNameDisplay(name);
-                    showToast(`✓ Đã lưu thành công thông tin bé "${name}" và mã PIN bảo vệ!`, "success");
-                } else {
-                    showToast(`Lỗi lưu cài đặt: ${data.detail || data.message}`, "error");
-                }
+                if (!res.ok) return showToast(`Lỗi lưu hồ sơ: ${formatError(data)}`, "error");
+                await refreshAccount();
+                showToast(pin ? `Đã lưu hồ sơ "${name}" và mã PIN mới.` : `Đã lưu hồ sơ "${name}".`, "success");
             } catch (err) {
-                showToast("Lỗi kết nối tới máy chủ khi lưu cài đặt!", "error");
+                showToast("Lỗi kết nối tới máy chủ khi lưu hồ sơ!", "error");
             }
         }
 
@@ -2121,6 +2459,7 @@
             if (parentWs && parentWs.readyState === WebSocket.OPEN) {
                 parentWs.send(JSON.stringify({
                     action: 'request_screen',
+                    child_id: currentChildId,
                     reason: 'Ba mẹ muốn xem màn hình học tập của con'
                 }));
                 return;
@@ -2132,8 +2471,8 @@
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        device_id: 'auto',
                         action: 'request_screen_consent',
+                        child_id: currentChildId,
                         reason: 'Ba mẹ muốn xem màn hình học tập của con'
                     })
                 });
@@ -2151,7 +2490,7 @@
         function cancelScreenRequest() {
             setMonitorState('idle');
             if (parentWs && parentWs.readyState === WebSocket.OPEN) {
-                parentWs.send(JSON.stringify({ action: 'stop_screen_share' }));
+                parentWs.send(JSON.stringify({ action: 'stop_screen_share', child_id: currentChildId }));
             }
             showToast("Đã hủy yêu cầu xem màn hình.", "info");
         }
@@ -2161,7 +2500,7 @@
             isStreamingActive = false;
             setMonitorState('idle');
             if (parentWs && parentWs.readyState === WebSocket.OPEN) {
-                parentWs.send(JSON.stringify({ action: 'stop_screen_share' }));
+                parentWs.send(JSON.stringify({ action: 'stop_screen_share', child_id: currentChildId }));
             }
             showToast("Đã dừng xem màn hình trẻ.", "info");
         }
@@ -2197,23 +2536,14 @@
             if (parentWs && (parentWs.readyState === 0 || parentWs.readyState === 1)) return;
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const host = window.location.host;
-            const wsUrl = `${protocol}//${host}/ws/parent_dashboard_${Date.now()}`;
+            const wsUrl = `${protocol}//${host}/ws/parent`;
 
             try {
                 parentWs = new WebSocket(wsUrl);
                 parentWs.binaryType = 'blob';
 
                 parentWs.onopen = () => {
-                    console.log("[Parent WS] Đã kết nối WebSocket thời gian thực thành công.");
-                    const unlocked = sessionStorage.getItem('ogk_parent_auth') === 'true' || sessionStorage.getItem('ogk_parent_unlocked') === '1';
-                    if (unlocked) {
-                        try {
-                            parentWs.send(JSON.stringify({
-                                action: 'parent_authenticated',
-                                child_id: currentChildId
-                            }));
-                        } catch (e) {}
-                    }
+                    console.log("[Parent WS] Đã kết nối WebSocket thời gian thực.");
                 };
 
                 parentWs.onmessage = (event) => {
@@ -2248,6 +2578,10 @@
                     try {
                         const data = JSON.parse(event.data);
                         const cmd = data.cmd || data.action;
+                        if (data.child_id != null && currentChildId != null && data.child_id !== currentChildId) {
+                            if (cmd === 'new_time_request') showToast('Một hồ sơ khác vừa gửi yêu cầu xin thêm giờ.', 'info');
+                            return;
+                        }
 
                         // 1. Nhận kết quả đồng thuận xem màn hình
                         if (cmd === 'screen_consent_result' || cmd === 'consent_response') {
@@ -2283,12 +2617,19 @@
                             }
                         }
                         // 4. Có yêu cầu xin thêm giờ mới -> thông báo & tải lại ngay
-                        else if (['extend_time', 'time_deducted', 'sync_policy'].includes(cmd) &&
-                                 (data.child_id == null || data.child_id === currentChildId)) {
+                        else if (['extend_time', 'time_deducted', 'sync_policy', 'lock_window', 'unlock_window'].includes(cmd)) {
                             loadDashboardStats();
                             if (cmd === 'sync_policy') loadPolicy();
+                            loadAuditLog();
                         }
-                        else if (cmd === 'new_time_request' && data.child_id === currentChildId) {
+                        else if (cmd === 'device_status') {
+                            refreshAccount();
+                            checkOnlineDevices();
+                        }
+                        else if (cmd === 'quota_warning') {
+                            showToast(`⏳ ${data.subject || 'Con sắp hết thời gian sử dụng'}`, 'info');
+                        }
+                        else if (cmd === 'new_time_request') {
                             showToast("🙋‍♂️ Bé vừa gửi yêu cầu xin thêm thời gian sử dụng!", "info");
                             loadRequests();
                         }
@@ -2319,7 +2660,7 @@
                             showToast(`💬 Bé vừa nhắn: "${text}"`, "info");
                         }
                         // 7. Cảnh báo vi phạm thời gian thực từ Cửa sổ Trẻ / Agent (Popup + Nhật ký)
-                        else if (cmd === 'violation_alert' || cmd === 'violation_toast') {
+                        else if ((cmd === 'violation_alert' || cmd === 'violation_toast') && data.type !== 'quota_warning') {
                             const targetName = data.target_name || data.message || 'Nội dung hạn chế';
                             let targetType = 'Trang web (Web)';
                             if (data.target_type === 'app') {
@@ -2358,7 +2699,7 @@
                 parentWs.onclose = () => {
                     isStreamingActive = false;
                     setMonitorState('idle');
-                    setTimeout(initParentWebSocket, 3000);
+                    if (account) setTimeout(initParentWebSocket, 3000);
                 };
             } catch (err) {
                 console.error("[Parent WS Init Error]:", err);
@@ -2369,209 +2710,99 @@
         // KIỂM TRA TRẠNG THÁI ONLINE CỦA THIẾT BỊ
         // -------------------------------------------------------------
         async function checkOnlineDevices() {
+            if (!currentChildId) return;
             try {
-                const res = await fetch('/devices/online');
-                if (res.ok) {
-                    const data = await res.json();
-                    const isOnline = data.online_devices && data.online_devices.length > 0;
-                    const indicator = document.getElementById('wsIndicator');
-                    const text = document.getElementById('wsStatusText');
-                    const guidText = document.getElementById('deviceGuidDisplay');
-
-                    if (isOnline) {
-                        indicator.className = "w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse";
-                        text.innerText = "Trực tuyến (Realtime WebSocket)";
-                        text.className = "font-medium text-emerald-100";
-                        guidText.innerText = `Device ID: ${data.online_devices[0]}`;
-                    } else {
-                        indicator.className = "w-2.5 h-2.5 rounded-full bg-slate-400";
-                        text.innerText = "Ngoại tuyến (Offline Cache Active)";
-                        text.className = "font-medium text-slate-300";
-                    }
-                }
+                const res = await fetch(`/devices/online?child_id=${currentChildId}`);
+                if (!res.ok) return;
+                const data = await res.json();
+                const agents = data.online_devices.length;
+                const portal = data.portals_online.includes(currentChildId);
+                const indicator = document.getElementById('wsIndicator');
+                const text = document.getElementById('wsStatusText');
+                const online = agents > 0 || portal;
+                indicator.className = online ? "w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" : "w-2.5 h-2.5 rounded-full bg-slate-400";
+                text.innerText = online ? "Máy của con đang trực tuyến" : "Máy của con ngoại tuyến";
+                text.className = online ? "font-medium text-emerald-100" : "font-medium text-slate-300";
+                document.getElementById('deviceGuidDisplay').innerText =
+                    `${agents} Agent trực tuyến · Cổng học tập ${portal ? 'đang mở' : 'đóng'}`;
             } catch (e) {}
         }
 
         // -------------------------------------------------------------
-        // ONBOARDING GATE / AUTHENTICATION (KIỂM SOÁT TRUY CẬP DASHBOARD)
+        // ĐĂNG NHẬP / TẠO TÀI KHOẢN PHỤ HUYNH (ARGON2ID, KHÓA 15 PHÚT SAU 5 LẦN SAI)
         // -------------------------------------------------------------
-        let isAuthModeOnly = false;
+        let isAuthModeOnly = true;
+
+        function showAuthModal(hasAccount = true) {
+            isAuthModeOnly = hasAccount;
+            document.getElementById('onboardingTitle').innerText = hasAccount ? 'Đăng nhập phụ huynh' : 'Tạo tài khoản phụ huynh';
+            document.getElementById('onboardingDesc').innerText = hasAccount
+                ? 'Nhập tài khoản phụ huynh để quản lý.'
+                : 'Tạo tài khoản quản lý (mật khẩu tối thiểu 10 ký tự) và hồ sơ đầu tiên của con.';
+            document.getElementById('onboardingSubmitText').innerText = hasAccount ? 'Đăng nhập' : 'Tạo tài khoản & bắt đầu';
+            document.getElementById('groupRegister').classList.toggle('hidden', hasAccount);
+            document.getElementById('onboardingPassword').autocomplete = hasAccount ? 'current-password' : 'new-password';
+            const modal = document.getElementById('onboardingModal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
 
         async function checkAuthOrOnboarding() {
-            const unlocked = sessionStorage.getItem('ogk_parent_auth') === 'true' || sessionStorage.getItem('ogk_parent_unlocked') === '1';
-            if (unlocked) {
-                return;
-            }
-
             try {
-                const res = await fetch(`/api/auth/status?t=${Date.now()}`);
-                if (res.ok) {
-                    const data = await res.json();
-                    const modal = document.getElementById('onboardingModal');
-                    const title = document.getElementById('onboardingTitle');
-                    const desc = document.getElementById('onboardingDesc');
-                    const submitText = document.getElementById('onboardingSubmitText');
-                    const groupChildName = document.getElementById('groupChildName');
-                    const groupConfirmPin = document.getElementById('groupConfirmPin');
-                    const labelLockPin = document.getElementById('labelLockPin');
-                    const nameInput = document.getElementById('onboardingChildName');
-                    const pinInput = document.getElementById('onboardingLockPin');
-                    const confirmPinInput = document.getElementById('onboardingConfirmPin');
-
-                    // RẠCH RÒI 2 TRƯỜNG HỢP:
-                    // TRƯỜNG HỢP B: ĐÃ CÓ PIN VÀ TÊN BÉ
-                    if (data.is_initialized && data.has_pin && data.child_name && data.child_name.trim()) {
-                        isAuthModeOnly = true;
-                        title.innerText = `Nhập mã PIN để mở Dashboard quản lý ${data.child_name}`;
-                        desc.innerText = "Vui lòng nhập mã PIN bảo mật đã thiết lập để mở quyền quản lý.";
-                        submitText.innerText = "Mở khóa Dashboard";
-                        groupChildName.classList.add('hidden');
-                        groupConfirmPin.classList.add('hidden');
-                        if (labelLockPin) labelLockPin.innerText = "🔑 Mã PIN phụ huynh:";
-                        if (pinInput) {
-                            pinInput.placeholder = "Nhập mã PIN của phụ huynh...";
-                            pinInput.value = "";
-                        }
-                    } else {
-                        // TRƯỜNG HỢP A: HỆ THỐNG MỚI (CHƯA CÓ TÊN BÉ HOẶC CHƯA CÓ PIN)
-                        isAuthModeOnly = false;
-                        title.innerText = "Thiết lập Hồ sơ Ban đầu";
-                        desc.innerText = "Vui lòng nhập tên của bé và tạo mã PIN bảo vệ để bắt đầu.";
-                        submitText.innerText = "Hoàn tất & Bắt đầu Quản lý";
-                        groupChildName.classList.remove('hidden');
-                        groupConfirmPin.classList.remove('hidden');
-                        if (labelLockPin) labelLockPin.innerText = "🔑 Tạo mã PIN quản lý (4-6 chữ số):";
-                        if (nameInput) nameInput.value = "";
-                        if (pinInput) {
-                            pinInput.placeholder = "Tạo mã PIN quản lý (4-6 chữ số)...";
-                            pinInput.value = "";
-                        }
-                        if (confirmPinInput) confirmPinInput.value = "";
-                    }
-
-                    modal.classList.remove('hidden');
-                    modal.classList.add('flex');
+                const res = await fetch('/api/auth/status');
+                const data = await res.json();
+                if (!data.authenticated) {
+                    showAuthModal(data.has_account);
+                    return false;
                 }
+                onAuthenticated(data);
+                return true;
             } catch (e) {
-                console.warn("Lỗi kiểm tra Onboarding/Auth:", e);
+                console.warn('Lỗi kiểm tra đăng nhập:', e);
+                return false;
             }
+        }
+
+        function onAuthenticated(data) {
+            applyAccount(data);
+            closeOnboardingModal();
+            refreshAll();
+            initParentWebSocket();
         }
 
         async function submitOnboardingOrAuth() {
             const errorEl = document.getElementById('onboardingErrorText');
+            const fail = message => { errorEl.innerText = message; errorEl.classList.remove('hidden'); };
             errorEl.classList.add('hidden');
-            errorEl.innerText = '';
+            const username = document.getElementById('onboardingUsername').value.trim();
+            const password = document.getElementById('onboardingPassword').value;
+            if (!username || !password) return fail('Vui lòng nhập tên đăng nhập và mật khẩu.');
 
-            const pin = (document.getElementById('onboardingLockPin')?.value || '').trim();
-
-            if (isAuthModeOnly) {
-                if (typeof submitPinAuth === 'function') {
-                    return submitPinAuth();
-                }
-                if (!pin) {
-                    errorEl.innerText = "Vui lòng nhập mã PIN bảo mật!";
-                    errorEl.classList.remove('hidden');
-                    return;
-                }
-
-                try {
-                    const res = await fetch('/api/auth/verify-pin', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            child_id: currentChildId,
-                            pin: pin
-                        })
-                    });
-                    const data = await res.json();
-                    if (res.ok && (data.success || data.valid || data.verified || data.status === 'success')) {
-                        sessionStorage.setItem('ogk_parent_auth', 'true');
-                        sessionStorage.setItem('ogk_parent_unlocked', '1');
-                        document.getElementById('onboardingModal').classList.add('hidden');
-                        document.getElementById('onboardingModal').classList.remove('flex');
-                        document.body.classList.remove('modal-open');
-                        if (data.child_name) {
-                            updateChildNameDisplay(data.child_name);
-                        }
-                        showToast("✓ Mở khóa Dashboard thành công!", "success");
-                        if (parentWs && parentWs.readyState === WebSocket.OPEN) {
-                            try {
-                                parentWs.send(JSON.stringify({
-                                    action: 'parent_authenticated',
-                                    child_id: currentChildId
-                                }));
-                            } catch (err) {}
-                        }
-                    } else {
-                        errorEl.innerText = data.message || "Mã PIN không chính xác! Vui lòng thử lại.";
-                        errorEl.classList.remove('hidden');
-                    }
-                } catch (e) {
-                    errorEl.innerText = "Lỗi kết nối tới máy chủ khi xác thực!";
-                    errorEl.classList.remove('hidden');
-                }
-                return;
+            let url = '/api/auth/login';
+            let payload = { username, password };
+            if (!isAuthModeOnly) {
+                const pin = document.getElementById('onboardingLockPin').value.trim();
+                const childName = document.getElementById('onboardingChildName').value.trim();
+                if (password.length < 10) return fail('Mật khẩu phải có ít nhất 10 ký tự.');
+                if (password !== document.getElementById('onboardingConfirmPassword').value) return fail('Mật khẩu nhập lại không khớp.');
+                if (!childName) return fail('Vui lòng nhập tên của trẻ.');
+                if (!/^\d{4,6}$/.test(pin)) return fail('Mã PIN mở khóa phải gồm 4 đến 6 chữ số.');
+                if (pin !== document.getElementById('onboardingConfirmPin').value.trim()) return fail('Xác nhận mã PIN không khớp.');
+                url = '/api/auth/register';
+                payload = { ...payload, child_name: childName, child_age: Number(document.getElementById('onboardingChildAge').value), pin };
             }
-
-            // Chế độ Onboarding lần đầu (Trường hợp A)
-            const name = (document.getElementById('onboardingChildName')?.value || '').trim();
-            const confirmPin = (document.getElementById('onboardingConfirmPin')?.value || '').trim();
-
-            if (!name) {
-                errorEl.innerText = "Vui lòng nhập tên của trẻ!";
-                errorEl.classList.remove('hidden');
-                return;
-            }
-            if (!pin || pin.length < 4 || pin.length > 6) {
-                errorEl.innerText = "Mã PIN quản lý phải từ 4 đến 6 chữ số!";
-                errorEl.classList.remove('hidden');
-                return;
-            }
-            if (pin !== confirmPin) {
-                errorEl.innerText = "Xác nhận mã PIN không khớp! Vui lòng nhập lại.";
-                errorEl.classList.remove('hidden');
-                return;
-            }
-
             try {
-                // Gọi API POST /api/settings/initialize theo đúng yêu cầu
-                const res = await fetch('/api/settings/initialize', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        child_id: currentChildId,
-                        child_name: name,
-                        lock_pin: pin
-                    })
-                });
+                const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
                 const data = await res.json();
-                if (res.ok && (data.status === 'success' || data.is_initialized)) {
-                    sessionStorage.setItem('ogk_parent_auth', 'true');
-                    sessionStorage.setItem('ogk_parent_unlocked', '1');
-                    document.getElementById('onboardingModal').classList.add('hidden');
-                    document.getElementById('onboardingModal').classList.remove('flex');
-                    updateChildNameDisplay(name);
-                    const inputName = document.getElementById('inputChildName');
-                    const inputPin = document.getElementById('inputLockPin');
-                    if (inputName) inputName.value = name;
-                    if (inputPin) inputPin.value = pin;
-                    showToast(`✓ Đã hoàn tất thiết lập hồ sơ bé "${name}" và mã PIN quản lý!`, "success");
-                    if (parentWs && parentWs.readyState === WebSocket.OPEN) {
-                        try {
-                            parentWs.send(JSON.stringify({
-                                action: 'parent_authenticated',
-                                child_id: currentChildId,
-                                child_name: name
-                            }));
-                        } catch (err) {}
-                    }
-                } else {
-                    errorEl.innerText = data.detail || data.message || "Không thể lưu thông tin. Vui lòng thử lại.";
-                    errorEl.classList.remove('hidden');
-                }
+                if (!res.ok) return fail(formatError(data));
+                document.getElementById('onboardingPassword').value = '';
+                document.getElementById('onboardingConfirmPassword').value = '';
+                document.getElementById('onboardingLockPin').value = '';
+                document.getElementById('onboardingConfirmPin').value = '';
+                onAuthenticated(data);
+                showToast(isAuthModeOnly ? 'Đăng nhập thành công!' : 'Đã tạo tài khoản và hồ sơ của con!', 'success');
             } catch (e) {
-                errorEl.innerText = "Lỗi kết nối máy chủ!";
-                errorEl.classList.remove('hidden');
+                fail('Lỗi kết nối máy chủ!');
             }
         }
 
@@ -2648,6 +2879,7 @@
             if (parentWs && parentWs.readyState === WebSocket.OPEN) {
                 parentWs.send(JSON.stringify({
                     action: 'chat_message',
+                    child_id: currentChildId,
                     message_id: messageId,
                     sender: 'parent',
                     text: text,
@@ -2685,16 +2917,11 @@
         }
 
         function closeOnboardingModal() {
-            const unlocked = sessionStorage.getItem('ogk_parent_auth') === 'true' || sessionStorage.getItem('ogk_parent_unlocked') === '1';
-            if (!unlocked) {
-                showToast("⚠️ Vui lòng nhập mã PIN hoặc hoàn tất thiết lập để truy cập Dashboard!", "warning");
-                return;
-            }
+            if (!account) return; // Bắt buộc đăng nhập trước khi dùng dashboard
             const modal = document.getElementById('onboardingModal');
-            if (modal) {
-                modal.classList.add('hidden');
-                modal.classList.remove('flex');
-            }
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+            document.getElementById('onboardingErrorText').classList.add('hidden');
         }
 
         // --- CÁC HÀM QUẢN LÝ MODAL THỜI GIAN BIỂU & NHẬT KÝ CHI TIẾT ---
@@ -2770,6 +2997,7 @@
                 closeTimeExpiredAlertModal();
                 closeMonitorFullscreen();
                 closeOnboardingModal();
+                closeAddChildModal();
                 closeDailyScheduleModal();
                 closeBedtimeConfigModal();
                 closeViolationDetailModal();
@@ -2783,6 +3011,7 @@
             if (e.target.id === 'dailyScheduleModal') closeDailyScheduleModal();
             if (e.target.id === 'bedtimeConfigModal') closeBedtimeConfigModal();
             if (e.target.id === 'violationDetailModal') closeViolationDetailModal();
+            if (e.target.id === 'addChildModal') closeAddChildModal();
         });
 
         // --- POPUP CẢNH BÁO VI PHẠM THỜI GIAN THỰC ---
@@ -2839,7 +3068,6 @@
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        device_id: 'CHILD-PC',
                         action: 'extend_time',
                         child_id: currentChildId,
                         reason: `Phụ huynh duyệt thêm ${minutes} phút từ cảnh báo hết giờ`,
@@ -2906,32 +3134,27 @@
 
         // Khởi động khi tải trang
         window.addEventListener('DOMContentLoaded', () => {
-            for (let hour = 0; hour <= 24; hour++) {
-                const label = `${String(hour).padStart(2, '0')}:00`;
-                if (hour < 24) document.getElementById('rangeStart').add(new Option(label, hour));
-                document.getElementById('rangeEnd').add(new Option(label, hour));
+            for (let slot = 0; slot <= SLOTS_PER_DAY; slot++) {
+                const label = slot === SLOTS_PER_DAY ? '24:00' : slotLabel(slot);
+                if (slot < SLOTS_PER_DAY) document.getElementById('rangeStart').add(new Option(label, slot));
+                document.getElementById('rangeEnd').add(new Option(label, slot));
             }
-            document.getElementById('rangeStart').value = '22';
-            document.getElementById('rangeEnd').value = '6';
+            document.getElementById('rangeStart').value = '44';
+            document.getElementById('rangeEnd').value = '12';
             initScheduleGrid();
             checkAuthOrOnboarding();
-            loadChildSettings();
-            loadPolicy();
-            loadRequests();
-            loadDashboardStats();
-            loadViolations();
-            loadAccessHistory();
-            loadMonitoringHistory();
-            checkOnlineDevices();
-            initParentWebSocket();
 
-            // Định kỳ làm mới dữ liệu
-            setInterval(checkOnlineDevices, 5000);
-            setInterval(loadRequests, 10000);
-            setInterval(loadDashboardStats, 5000);
-            setInterval(loadViolations, 10000);
-            setInterval(loadAccessHistory, 10000);
-            setInterval(loadMonitoringHistory, 10000);
+            // Định kỳ làm mới dữ liệu của hồ sơ đang chọn
+            const every = (fn, ms) => setInterval(() => { if (account && currentChildId) fn(); }, ms);
+            every(checkOnlineDevices, 5000);
+            every(loadRequests, 10000);
+            every(loadDashboardStats, 5000);
+            every(loadViolations, 10000);
+            every(loadAccessHistory, 10000);
+            every(loadMonitoringHistory, 15000);
+            every(loadReports, 30000);
+            every(loadAuditLog, 30000);
+            every(refreshAccount, 30000);
         });
     </script>
 </body>

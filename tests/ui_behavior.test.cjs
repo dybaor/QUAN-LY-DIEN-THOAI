@@ -58,7 +58,7 @@ class Element {
     getContext() { return {}; }
 }
 
-function runtime(script, html) {
+function runtime(script, html, extra = {}) {
     const nodes = new Map();
     for (const match of html.matchAll(/<([\w-]+)\b([^>]*\bid="([^"]+)"[^>]*)>/g)) {
         const element = new Element(match[1]);
@@ -82,6 +82,7 @@ function runtime(script, html) {
         URL, URLSearchParams, Blob, Date, Option: class {},
         sessionStorage: { getItem: () => null, setItem() {} },
         fetch: async () => ({ ok: false, json: async () => ({}) }),
+        ...extra,
     });
     vm.runInContext(fs.readFileSync(path.join(root, "server/static/js/time-timeline.js"), "utf8"), context);
     vm.runInContext(script, context);
@@ -100,27 +101,24 @@ function runtime(script, html) {
 
 function parent() {
     const app = runtime(parentScript, parentHtml);
-    app.run("currentPolicy = { version: 1, blocked_domains: '', daily_quota_weekday_min: 120, daily_quota_weekend_min: 180, schedule_matrix: '1'.repeat(168) };");
-    app.nodes.get('rangeStart').value = '22';
-    app.nodes.get('rangeEnd').value = '6';
+    app.run("currentChildId = 1; currentPolicy = { version: 1, blocked_domains: '', blocked_categories: 'games', daily_quota_weekday_min: 120, daily_quota_weekend_min: 180, schedule_matrix: '1'.repeat(336) }; selectedCategories = ['games'];");
+    app.nodes.get('rangeStart').value = '44'; // 22:00 (khung 30 phút)
+    app.nodes.get('rangeEnd').value = '12';   // 06:00
     app.nodes.get('rangeState').value = '0';
     return app;
 }
 
-function policy(matrix = '1'.repeat(168)) {
-    return { version: 3, daily_quota_weekday_min: 120, daily_quota_weekend_min: 180, schedule_matrix: matrix, blocked_apps: '', blocked_domains: '' };
+function policy(matrix = '1'.repeat(336)) {
+    return { version: 3, daily_quota_weekday_min: 120, daily_quota_weekend_min: 180, schedule_matrix: matrix, blocked_apps: '', blocked_domains: '', blocked_categories: 'games' };
 }
 
-test('both parent entry templates stay identical', () => {
-    assert.equal(parentHtml, fs.readFileSync(path.join(root, 'server/templates/index.html'), 'utf8'));
-});
-
-test('weekly grid renders 168 keyboard-accessible slots and seven summaries', () => {
+test('weekly grid renders 336 keyboard-accessible half-hour slots and seven summaries', () => {
     const app = parent();
     app.run('initScheduleGrid()');
     const rows = app.nodes.get('scheduleMatrixGrid').children;
     assert.equal(rows.length, 7);
-    assert.equal(rows.flatMap(row => row.children[1].children).length, 168);
+    assert.equal(rows.flatMap(row => row.children[1].children).length, 336);
+    assert.match(rows[0].children[1].children[1].title, /00:30–01:00/);
     const cell = rows[0].children[1].children[0];
     assert.equal(cell.type, 'button');
     assert.equal(cell.attributes['aria-pressed'], 'true');
@@ -133,7 +131,7 @@ test('weekly grid renders 168 keyboard-accessible slots and seven summaries', ()
 
 test('summary merges adjacent slots including 24:00', () => {
     const app = parent();
-    app.run("scheduleMatrixArray = Array(168).fill('0'); renderScheduleSummary();");
+    app.run("scheduleMatrixArray = Array(336).fill('0'); renderScheduleSummary();");
     assert.equal((app.nodes.get('scheduleSummary').innerHTML.match(/00:00–24:00/g) || []).length, 7);
     assert.equal((app.nodes.get('scheduleSummary').innerHTML.match(/schedule-range rest/g) || []).length, 7);
 });
@@ -141,38 +139,38 @@ test('summary merges adjacent slots including 24:00', () => {
 test('daytime range changes only the selected days and hours', () => {
     const app = parent();
     app.selectedDays([0, 2]);
-    app.nodes.get('rangeStart').value = '8';
-    app.nodes.get('rangeEnd').value = '11';
+    app.nodes.get('rangeStart').value = '17'; // 08:30
+    app.nodes.get('rangeEnd').value = '22';   // 11:00
     app.run('applyScheduleRange()');
     const actual = app.run("scheduleMatrixArray.map((state, index) => state === '0' ? index : -1).filter(index => index >= 0).join(',')");
-    assert.equal(actual, '8,9,10,56,57,58');
+    assert.equal(actual, '17,18,19,20,21,113,114,115,116,117');
 });
 
 test('overnight range extends to the next day', () => {
     const app = parent();
     app.selectedDays([0]);
     app.run('applyScheduleRange()');
-    assert.equal(app.run("scheduleMatrixArray.slice(0, 6).join('')"), '111111');
-    assert.equal(app.run("scheduleMatrixArray.slice(22, 30).join('')"), '00000000');
-    assert.equal(app.run('scheduleMatrixArray[30]'), '1');
+    assert.equal(app.run("scheduleMatrixArray.slice(0, 12).join('')"), '1'.repeat(12));
+    assert.equal(app.run("scheduleMatrixArray.slice(44, 60).join('')"), '0'.repeat(16));
+    assert.equal(app.run('scheduleMatrixArray[60]'), '1');
 });
 
 test('Sunday overnight range wraps to Monday', () => {
     const app = parent();
     app.selectedDays([6]);
     app.run('applyScheduleRange()');
-    assert.equal(app.run("scheduleMatrixArray.slice(166).join('')"), '00');
-    assert.equal(app.run("scheduleMatrixArray.slice(0, 6).join('')"), '000000');
-    assert.equal(app.run("scheduleMatrixArray.slice(144, 150).join('')"), '111111');
+    assert.equal(app.run("scheduleMatrixArray.slice(332).join('')"), '0000');
+    assert.equal(app.run("scheduleMatrixArray.slice(0, 12).join('')"), '0'.repeat(12));
+    assert.equal(app.run("scheduleMatrixArray.slice(288, 300).join('')"), '1'.repeat(12));
 });
 
 test('range supports midnight to 24:00 for a full day', () => {
     const app = parent();
     app.selectedDays([3]);
     app.nodes.get('rangeStart').value = '0';
-    app.nodes.get('rangeEnd').value = '24';
+    app.nodes.get('rangeEnd').value = '48';
     app.run('applyScheduleRange()');
-    assert.equal(app.run("scheduleMatrixArray.filter(state => state === '0').length"), 24);
+    assert.equal(app.run("scheduleMatrixArray.filter(state => state === '0').length"), 48);
 });
 
 test('range rejects an empty selection and equal endpoints', () => {
@@ -180,7 +178,7 @@ test('range rejects an empty selection and equal endpoints', () => {
     app.selectedDays([]);
     app.run('applyScheduleRange()');
     app.selectedDays([0]);
-    app.nodes.get('rangeEnd').value = '22';
+    app.nodes.get('rangeEnd').value = '44';
     app.run('applyScheduleRange()');
     assert.equal(app.run('scheduleDirty'), false);
     assert.equal(app.context.testToasts.length, 2);
@@ -190,30 +188,30 @@ test('restoring allowed time keeps other restrictions intact', () => {
     const app = parent();
     app.run("scheduleMatrixArray.fill('0')");
     app.selectedDays([1]);
-    app.nodes.get('rangeStart').value = '9';
-    app.nodes.get('rangeEnd').value = '10';
+    app.nodes.get('rangeStart').value = '18';
+    app.nodes.get('rangeEnd').value = '19';
     app.nodes.get('rangeState').value = '1';
     app.run('applyScheduleRange()');
     assert.equal(app.run("scheduleMatrixArray.filter(state => state === '1').length"), 1);
-    assert.equal(app.run('scheduleMatrixArray[33]'), '1');
+    assert.equal(app.run('scheduleMatrixArray[66]'), '1');
 });
 
 test('bedtime and school presets preserve restrictions in other periods', () => {
     const app = parent();
-    app.run("scheduleMatrixArray[12] = '0'; setSchedulePreset('bedtime_lock'); setSchedulePreset('school_lock');");
-    assert.equal(app.run('scheduleMatrixArray[12]'), '0');
-    assert.equal(app.run('scheduleMatrixArray[8]'), '0');
-    assert.equal(app.run('scheduleMatrixArray[5 * 24 + 8]'), '1');
-    assert.equal(app.run('scheduleMatrixArray[6 * 24 + 23]'), '0');
+    app.run("scheduleMatrixArray[24] = '0'; setSchedulePreset('bedtime_lock'); setSchedulePreset('school_lock');");
+    assert.equal(app.run('scheduleMatrixArray[24]'), '0');
+    assert.equal(app.run('scheduleMatrixArray[16]'), '0');
+    assert.equal(app.run('scheduleMatrixArray[5 * 48 + 16]'), '1');
+    assert.equal(app.run('scheduleMatrixArray[6 * 48 + 47]'), '0');
 });
 
-test('policy load handles legacy 336-slot schedules conservatively', async () => {
+test('policy load expands legacy hourly schedules to half-hour slots', async () => {
     const app = parent();
-    app.setPolicy(policy('10'.repeat(168)));
+    app.setPolicy(policy('10'.repeat(84)));
     await app.run('loadPolicy()');
     assert.equal(app.errors.length, 0);
-    assert.equal(app.run('scheduleMatrixArray.length'), 168);
-    assert.equal(app.run("scheduleMatrixArray.every(state => state === '0')"), true);
+    assert.equal(app.run('scheduleMatrixArray.length'), 336);
+    assert.equal(app.run("scheduleMatrixArray.slice(0, 8).join('')"), '11001100');
     assert.equal(app.nodes.get('weekdaySlider').disabled, false);
     assert.match(app.nodes.get('weekdayQuotaDisplay').innerText, /120/);
 });
@@ -237,8 +235,10 @@ test('saving sends the existing API schema and clears dirty state', async () => 
     app.run("scheduleMatrixArray[1] = '0'; markScheduleDirty();");
     await app.run('saveScheduleMatrixOnly()');
     assert.equal(sent.length, 1);
-    assert.equal(sent[0].schedule_matrix.length, 168);
+    assert.equal(sent[0].schedule_matrix.length, 336);
     assert.equal(sent[0].schedule_matrix[1], '0');
+    assert.equal(sent[0].child_id, 1);
+    assert.equal(sent[0].blocked_categories, 'games');
     assert.equal(sent[0].daily_quota_weekday_min, 120);
     assert.equal(app.run('scheduleDirty'), false);
     assert.equal(app.nodes.get('saveScheduleButton').disabled, false);
@@ -345,28 +345,79 @@ test('monitor transitions preserve compact idle and expanded live state', () => 
     assert.equal(app.nodes.get('liveScreenImg').classList.contains('hidden'), true);
 });
 
-test('child catalogue only has Google and escapes unmatched text', () => {
+test('child portal has no Google app card: the app section stays hidden until an app is added', () => {
     const app = runtime(childScript, childHtml);
-    app.nodes.get('searchAppInput').value = 'tim kiem';
+    assert.equal(app.run('APPS.length'), 0);
     app.run('renderApps()');
-    assert.equal(app.nodes.get('appGrid').children.length, 1);
-    assert.equal(app.nodes.get('appGrid').children[0].attributes['data-id'], 'google_search');
+    assert.equal(app.nodes.get('appsSection').hidden, true);
+    assert.equal(app.nodes.get('appGrid').children.length, 0);
+    assert.doesNotMatch(childHtml, /Google Tìm kiếm\s*<\/h3>/);
+    assert.doesNotMatch(childHtml, /Xin mở 15p/);
+});
+
+test('future apps still render, escape unmatched text and respect locking', () => {
+    const app = runtime(childScript, childHtml);
+    app.run("APPS.push({ id: 'demo', name: 'Máy tính', category: 'study', icon: '🧮', desc: 'Tính toán', url: 'https://example.org', type: 'web', allowed: true });");
+    app.run('renderApps()');
+    assert.equal(app.nodes.get('appsSection').hidden, false);
+    assert.equal(app.nodes.get('appGrid').children[0].attributes['data-id'], 'demo');
     app.nodes.get('searchAppInput').value = '<img src=x onerror=alert(1)>';
     app.run('renderApps()');
     assert.doesNotMatch(app.nodes.get('appGrid').innerHTML, /<img/);
     assert.match(app.nodes.get('appGrid').innerHTML, /&lt;img/);
-});
-
-test('child launch button has an accessible label and respects locking', () => {
-    const app = runtime(childScript, childHtml);
+    app.nodes.get('searchAppInput').value = '';
     app.run('renderApps(); isLocked = true;');
     const card = app.nodes.get('appGrid').children[0];
-    assert.match(card.launchButton.attributes['aria-label'], /Mở Google Tìm Kiếm/);
+    assert.match(card.launchButton.attributes['aria-label'], /Mở Máy tính/);
     card.launchButton.click();
     assert.match(app.context.testToasts.at(-1)[0], /đang bị khóa/);
     app.run('isLocked = false; isTimeExpired = true;');
     card.launchButton.click();
     assert.match(app.context.testToasts.at(-1)[0], /hết thời gian/);
+});
+
+test('search bar: forbidden keyword is blocked and reported to the parent, safe query opens SafeSearch', () => {
+    const app = runtime(childScript, childHtml);
+    const sent = [], opened = [], fetches = [];
+    app.context.WebSocket = { OPEN: 1 };
+    app.context.fetch = async url => { fetches.push(url); return { ok: true, json: async () => ({}) }; };
+    app.run("childId = 1; waitingForSetup = false; remainingSeconds = 3600;");
+    app.run("ws = { readyState: 1, send: data => sent.push(JSON.parse(data)) }; openInAppBrowser = (url, title) => opened.push(url);");
+    app.context.sent = sent; app.context.opened = opened;
+    const input = app.nodes.get('searchAppInput');
+    input.value = 'phim sex';
+    app.run('handleGoogleOrDomainSearch()');
+    assert.deepEqual(opened, []);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].action, 'violation_alert');
+    assert.equal(sent[0].target_name, 'phim sex');
+    assert.deepEqual(fetches, ['/api/child/access-log']);
+    input.value = 'bài tập toán lớp 5';
+    app.run('handleGoogleOrDomainSearch()');
+    const url = new URL(opened[0]);
+    assert.equal(url.origin + url.pathname, 'https://www.google.com/search');
+    assert.equal(url.searchParams.get('safe'), 'active');
+    assert.equal(url.searchParams.get('q'), 'bài tập toán lớp 5');
+    assert.equal(sent.length, 1, 'tìm kiếm hợp lệ không được báo vi phạm');
+});
+
+test('search bar: names of domains the parent blocked count as forbidden keywords', () => {
+    const app = runtime(childScript, childHtml);
+    const sent = [], opened = [];
+    app.context.WebSocket = { OPEN: 1 };
+    app.context.fetch = async () => ({ ok: true, json: async () => ({}) });
+    app.run("childId = 1; waitingForSetup = false; remainingSeconds = 3600; currentPolicy = { blocked_domains: 'tiktok.com, vi-du-game.com' };");
+    app.run("ws = { readyState: 1, send: data => sent.push(JSON.parse(data)) }; openInAppBrowser = (url) => opened.push(url);");
+    app.context.sent = sent; app.context.opened = opened;
+    const input = app.nodes.get('searchAppInput');
+    for (const query of ['xem tiktok', 'TikTok video', 'tải vi-du-game.com']) {
+        input.value = query; app.run('handleGoogleOrDomainSearch()');
+    }
+    assert.equal(sent.length, 3);
+    assert.deepEqual(opened, []);
+    input.value = 'tik tok cho trẻ em'; // chỉ chứa từ rời, không phải tên miền đã chặn
+    app.run('handleGoogleOrDomainSearch()');
+    assert.equal(opened.length, 1);
 });
 
 test('child remaining-time display uses consistent warning colors', () => {
@@ -585,12 +636,12 @@ test('timeline shows the next access change across midnight', () => {
 
 test('schedule preview marks draft ranges separately from the active timeline', () => {
     const app = parent();
-    app.run(`scheduleMatrixArray[8] = '0'; renderScheduleSummary();`);
+    app.run(`scheduleMatrixArray[16] = '0'; scheduleMatrixArray[17] = '0'; renderScheduleSummary();`);
     const preview = app.nodes.get('schedulePreview');
     assert.equal(preview.hidden, false);
-    assert.match(preview.innerHTML, /1 khung giờ thay đổi trong tuần/);
+    assert.match(preview.innerHTML, /2 khung 30 phút thay đổi trong tuần/);
     assert.match(app.nodes.get('scheduleSummary').innerHTML, /08:00–09:00<\/b> · Đã sửa/);
-    app.run(`scheduleMatrixArray[8] = '1'; renderScheduleSummary();`);
+    app.run(`scheduleMatrixArray[16] = '1'; scheduleMatrixArray[17] = '1'; renderScheduleSummary();`);
     assert.equal(preview.hidden, true);
 });
 
@@ -598,4 +649,68 @@ test('weekly summary reports recorded duration and active days', () => {
     const app = parent();
     assert.match(app.run('OgkTimeline.weeklySummary([0, 25, 0, 0, 50, 0, 0])'), /1 giờ 15 phút.*2\/7 ngày/);
     assert.match(app.run('OgkTimeline.weeklySummary(Array(7).fill(0))'), /Chưa ghi nhận/);
+});
+
+test('child portal warns at 10/5/1 minutes and grants a 60-second grace before locking', async () => {
+    const app = runtime(childScript, childHtml);
+    const events = [];
+    app.context.fetch = async (url, options = {}) => {
+        if (url === '/api/child/events') events.push(JSON.parse(options.body)[0].type);
+        return { ok: true, json: async () => ({ remaining_seconds: app.context.remaining, quota_minutes: 60, lock_reason: null, paused_until: null }) };
+    };
+    app.run("childId = 1; waitingForSetup = false;");
+    for (const seconds of [590, 290, 50]) {
+        app.context.remaining = seconds;
+        await app.run('syncUsage(false)');
+    }
+    assert.deepEqual(events, ['quota_warning', 'quota_warning', 'quota_warning']);
+    app.context.remaining = 0;
+    await app.run('syncUsage(false)');
+    assert.equal(app.run('isTimeExpired'), false);
+    assert.equal(app.nodes.get('graceBanner').hidden, false);
+    app.run('graceDeadline = Date.now() - 1; tickGracePeriod();');
+    assert.equal(app.run('isTimeExpired'), true);
+});
+
+test('child portal locks immediately when opened after the quota is used up', async () => {
+    const app = runtime(childScript, childHtml);
+    app.context.fetch = async () => ({ ok: true, json: async () => ({ remaining_seconds: 0, quota_minutes: 60, lock_reason: null, paused_until: null }) });
+    app.run("childId = 1; waitingForSetup = false;");
+    await app.run('syncUsage(false)');
+    assert.equal(app.run('isTimeExpired'), true);
+});
+
+test('parent writes carry the CSRF token through the fetch wrapper', async () => {
+    const calls = [];
+    const nativeFetch = async (url, options) => { calls.push(options); return { status: 200, ok: true, json: async () => ({}) }; };
+    const window = { addEventListener() {}, location: { protocol: 'http:', host: 'localhost', pathname: '/' }, fetch: nativeFetch };
+    const app = runtime(parentScript, parentHtml, { window, Headers });
+    app.run("csrfToken = 'abc';");
+    await app.run("window.fetch('/policy/update', { method: 'PUT' })");
+    assert.equal(calls[0].headers.get('X-CSRF-Token'), 'abc');
+    assert.equal(calls[0].credentials, 'same-origin');
+});
+
+test('child portal shows the rest-hour overlay outside the weekly schedule and releases it afterwards', async () => {
+    const app = runtime(childScript, childHtml);
+    let blocked = true;
+    app.context.fetch = async () => ({ ok: true, json: async () => ({ remaining_seconds: 3600, quota_minutes: 120, lock_reason: null, paused_until: null, schedule_blocked: blocked }) });
+    app.run("childId = 1; waitingForSetup = false;");
+    await app.run('syncUsage(false)');
+    assert.equal(app.nodes.get('lockOverlay').classList.contains('active'), true);
+    assert.match(app.nodes.get('lockReasonText').innerText, /giờ nghỉ/);
+    app.run('hideLockOverlay()');
+    assert.equal(app.nodes.get('lockOverlay').classList.contains('active'), true, 'PIN không mở được giờ nghỉ theo lịch');
+    blocked = false;
+    await app.run('syncUsage(false)');
+    assert.equal(app.nodes.get('lockOverlay').classList.contains('active'), false);
+});
+
+test('a blocked search produces one block record, not two', async () => {
+    const app = runtime(childScript, childHtml);
+    const calls = [];
+    app.context.fetch = async url => { calls.push(url); return { ok: true, json: async () => ({}) }; };
+    app.run("childId = 1; waitingForSetup = false; ws = null;");
+    app.run("triggerViolationAlert('phim sex', 'keyword'); logAccess('phim sex', 'Tìm kiếm', 'blocked');");
+    assert.deepEqual(calls, ['/api/child/access-log']);
 });

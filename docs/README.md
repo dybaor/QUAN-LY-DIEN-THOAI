@@ -22,7 +22,8 @@ DoAn_NguoiBanDongHanh/
 │   ├── ws_client.py             # Client WebSocket lắng nghe lệnh lock_now (< 5s)
 │   ├── install_service.bat      # Script cài đặt tự động một chạm (quyền Admin)
 │   ├── uninstall_service.bat    # Script gỡ bỏ Windows Service
-│   └── test_agent.py            # Script chạy console độc lập để kiểm thử
+│   ├── tray_ui.py               # Biểu tượng khay hệ thống trong phiên của trẻ
+│   └── enforcer.py              # Hạn mức, lịch 7x48, cảnh báo 10/5/1 phút, ân hạn 60 giây (chỉ ghi sự kiện)
 │
 ├── dns_proxy/                   # [Thành viên B - DNS & Network Security]
 │   ├── proxy_server.py          # DNS Server UDP 127.0.0.1:53 (dnslib)
@@ -47,21 +48,14 @@ DoAn_NguoiBanDongHanh/
 ## 2. Các Bước Khởi chạy Hệ thống (Quick Start)
 
 ### Bước 1: Khởi động Server Quản lý (Thành viên C)
-Mở cửa sổ dòng lệnh Terminal thứ nhất:
-```powershell
-cd DoAn_NguoiBanDongHanh/server
-uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
-```
-- Mở trình duyệt truy cập Web Dashboard Phụ huynh tại: `http://127.0.0.1:8000`
+Nhấp đúp `Start_App.bat` ở thư mục gốc (macOS: `./Start_App.command`). Launcher tự tạo `.venv`, bật máy chủ và mở:
+- Dashboard Phụ huynh: `http://127.0.0.1:8000` (lần đầu tạo tài khoản phụ huynh + hồ sơ trẻ)
+- Cổng học tập của trẻ: `http://127.0.0.1:8000/child` (ghép đôi bằng mã 8 ký tự tạo trên Dashboard)
 
 ---
 
 ### Bước 2: Khởi động DNS Proxy Lọc mạng (Thành viên B)
-Mở cửa sổ dòng lệnh Terminal thứ hai với quyền **Administrator**:
-```powershell
-cd DoAn_NguoiBanDongHanh/dns_proxy
-python proxy_server.py
-```
+Mở Command Prompt với quyền **Administrator** và chạy `Start_App.bat --with-dns` (hoặc `python dns_proxy/proxy_server.py`).
 - DNS Proxy sẽ lắng nghe tại `127.0.0.1:53`, sẵn sàng lọc web xấu và ép SafeSearch cho Google/YouTube.
 - Chạy benchmark đo đạc hiệu năng 30 mẫu M4:
   ```powershell
@@ -71,20 +65,16 @@ python proxy_server.py
 ---
 
 ### Bước 3: Khởi chạy và Kiểm thử Agent Máy con (Thành viên A)
-#### Cách 1: Chạy kiểm thử Console Standalone (Khuyên dùng khi debug & demo):
-Mở cửa sổ dòng lệnh Terminal thứ ba:
+#### Cách 1: Chạy trực tiếp (debug & demo):
 ```powershell
-cd DoAn_NguoiBanDongHanh/agent
-python test_agent.py
+python agent/main_service.py enroll <MÃ-GHÉP-ĐÔI>
+Start_App.bat --with-agent
 ```
-Hoặc chạy trực tiếp engine Agent trên màn hình:
-```powershell
-python main_service.py debug
-```
+Kiểm thử tự động: `python -m pytest tests -q` và `node --test tests/ui_behavior.test.cjs`.
 
 #### Cách 2: Cài đặt dưới dạng Windows Service chính thức:
 1. Mở Command Prompt với quyền **Run as Administrator**.
-2. Chạy file cài đặt một chạm:
+2. Chạy file cài đặt (sẽ hỏi mã ghép đôi):
    ```cmd
    cd DoAn_NguoiBanDongHanh\agent
    install_service.bat

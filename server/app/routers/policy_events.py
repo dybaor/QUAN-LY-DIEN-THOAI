@@ -1,64 +1,63 @@
-import hashlib
-from sqlalchemy import case, func
-from sqlalchemy.dialects.sqlite import insert
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import List, Optional, Union
 
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
-from pydantic import BaseModel, Field, validator
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel, Field, field_validator
+from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Session
 
+from .. import audit, config
+from ..categories import normalize_categories
+from ..daily_time import adjust_today
 from ..database import get_db
-from ..daily_time import adjust_today, adjustment_minutes
-from ..models import AgentDailyUsage, DeviceEvent, Policy, Child, MonitoringSession, AccessHistoryLog, WebDailyUsage, ChildWindowLock
+from ..deps import (
+    Principal, authorize_child, client_ip, require_admin, require_device, require_parent,
+)
+from ..models import (
+    AccessHistoryLog, AgentDailyUsage, AuditLog, ChildWindowLock, DailyTimeAdjustment, DeviceEvent,
+    MonitoringSession, TimeRequest, WebDailyUsage,
+)
+from ..services import (
+    VIOLATION_TYPES, daily_usage_seconds, local_text, get_or_create_policy, normalize_event_type, normalize_schedule,
+    policy_payload, time_snapshot,
+)
 from ..websocket_manager import manager
 
 router = APIRouter(tags=["Policies & Events"])
 
 
 # ==========================================
-# PYDANTIC SCHEMAS
+# SCHEMAS
 # ==========================================
 class DeductTimeSchema(BaseModel):
-    child_id: int = 1
+    child_id: int
     deduct_min: int = Field(default=15, ge=1, le=480, description="Số phút cần trừ bớt")
-    reason: str = Field(default="Phụ huynh phạt trừ bớt thời gian giải trí", max_length=255)
+    reason: str = Field(default="Phụ huynh trừ bớt thời gian giải trí", max_length=255)
 
 
 class PolicyUpdateSchema(BaseModel):
     child_id: int
     daily_quota_weekday_min: int = Field(ge=0, le=1440, description="Phút ngày thường")
     daily_quota_weekend_min: int = Field(ge=0, le=1440, description="Phút cuối tuần")
-    schedule_matrix: Optional[str] = "1" * 168
-    blocked_apps: Optional[str] = ""
-    blocked_domains: Optional[str] = ""
-    child_name: Optional[str] = None
-    lock_pin: Optional[str] = None
+    schedule_matrix: Optional[str] = None
+    blocked_apps: Optional[str] = None
+    blocked_domains: Optional[str] = None
+    blocked_categories: Optional[str] = None
 
-    @validator("schedule_matrix")
-    def validate_schedule_matrix(cls, v):
-        if v is not None:
-            v = v.strip()
-            # Hỗ trợ chuẩn mới 168 ký tự (7 ngày x 24 giờ) và tương thích chuẩn cũ 336 ký tự
-            if len(v) not in (168, 336):
-                raise ValueError("Ma trận lịch tuần schedule_matrix bắt buộc phải có đúng 168 ký tự (7 ngày x 24 khung giờ)")
-            if not all(c in ("0", "1") for c in v):
-                raise ValueError("Ma trận lịch tuần chỉ được chứa các ký tự '0' (khóa) hoặc '1' (cho phép)")
-        return v
+    @field_validator("schedule_matrix")
+    @classmethod
+    def validate_schedule_matrix(cls, value):
+        return normalize_schedule(value) if value is not None else value
+
+    @field_validator("blocked_categories")
+    @classmethod
+    def validate_categories(cls, value):
+        return normalize_categories(value) if value is not None else value
 
 
-class SettingsUpdateSchema(BaseModel):
-    child_id: int = 1
-    child_name: str = Field(default="", max_length=100, description="Tên của trẻ")
-    lock_pin: str = Field(..., min_length=4, max_length=50, description="Mật khẩu hoặc mã PIN mở khóa do phụ huynh cài đặt")
-
-
-class VerifyPinSchema(BaseModel):
-    unlock_window: bool = False
-    child_id: Optional[int] = 1
-    pin: Optional[str] = None
-    password: Optional[str] = None
-    lock_pin: Optional[str] = None
+class PauseSchema(BaseModel):
+    child_id: int
+    minutes: int = Field(default=config.PAUSE_MAX_MINUTES, ge=5, le=config.PAUSE_MAX_MINUTES)
 
 
 class LaunchAppSchema(BaseModel):
@@ -67,717 +66,332 @@ class LaunchAppSchema(BaseModel):
 
 class EventCreateSchema(BaseModel):
     ts: datetime
-    device_id: str
-    child_id: int
+    device_id: Optional[str] = None
+    child_id: Optional[int] = None
     type: str
-    subject: str
-    duration_sec: int
+    subject: str = Field(..., max_length=255)
+    duration_sec: int = Field(default=0, ge=0, le=86400)
     policy_id: Optional[int] = None
+    idempotency_key: Optional[str] = Field(default=None, max_length=64)
 
 
 class MonitoringStartSchema(BaseModel):
-    child_id: int = 1
-    device_id: str = "CHILD-PC"
+    child_id: int
+    device_id: str = "web-portal"
 
 
 class MonitoringStopSchema(BaseModel):
+    child_id: int
     session_id: Optional[int] = None
-    child_id: int = 1
-
-
-class AccessLogCreateSchema(BaseModel):
-    child_id: int = 1
-    device_id: str = "CHILD-PC"
-    target_name: str
-    target_type: str = "Trang web"  # "Ứng dụng", "Trang web", "Tìm kiếm"
-    status: str = "allowed"  # "allowed", "blocked"
-
 
 
 # ==========================================
-# 1. API QUẢN LÝ CHÍNH SÁCH (POLICY)
+# 1. CHÍNH SÁCH
 # ==========================================
+POLICY_FIELDS = ("daily_quota_weekday_min", "daily_quota_weekend_min", "schedule_matrix",
+                 "blocked_apps", "blocked_domains", "blocked_categories")
+
+
 @router.get("/policy/{child_id}")
-def get_child_policy(child_id: int, db: Session = Depends(get_db)):
-    """Lấy chính sách hiện tại của trẻ, tạo mặc định nếu chưa tồn tại."""
-    policy = db.query(Policy).filter(Policy.child_id == child_id).first()
-    if not policy:
-        policy = Policy(child_id=child_id)
-        db.add(policy)
-        db.commit()
-        db.refresh(policy)
-    day = datetime.now().date()
-    policy.adjustment_date = day.isoformat()
-    policy.adjustment_minutes = adjustment_minutes(db, child_id, day)
-    return policy
+def get_child_policy(child_id: int, principal: Principal = Depends(require_parent), db: Session = Depends(get_db)):
+    child = authorize_child(db, principal, child_id)
+    return policy_payload(db, get_or_create_policy(db, child))
 
 
 @router.put("/policy/update")
-async def update_policy(req: PolicyUpdateSchema, db: Session = Depends(get_db)):
-    """Cập nhật chính sách, tăng version và phát thông báo WebSocket tức thì cho Agent."""
-    policy = db.query(Policy).filter(Policy.child_id == req.child_id).first()
-    if not policy:
-        policy = Policy(child_id=req.child_id)
-        db.add(policy)
-
+async def update_policy(req: PolicyUpdateSchema, request: Request, principal: Principal = Depends(require_parent),
+                        db: Session = Depends(get_db)):
+    """Cập nhật chính sách, tăng version, ghi audit log và báo Agent đồng bộ ngay."""
+    child = authorize_child(db, principal, req.child_id)
+    policy = get_or_create_policy(db, child)
+    before = {field: getattr(policy, field) for field in POLICY_FIELDS}
+    before["schedule_matrix"] = normalize_schedule(before["schedule_matrix"] or "1" * 336)
     policy.daily_quota_weekday_min = req.daily_quota_weekday_min
     policy.daily_quota_weekend_min = req.daily_quota_weekend_min
-    if req.schedule_matrix:
-        policy.schedule_matrix = req.schedule_matrix
-    if req.blocked_apps is not None:
-        policy.blocked_apps = req.blocked_apps
-    if req.blocked_domains is not None:
-        policy.blocked_domains = req.blocked_domains
-    if req.child_name is not None:
-        policy.child_name = req.child_name.strip()
-    if req.lock_pin is not None:
-        policy.lock_pin = req.lock_pin.strip()
-    policy.version += 1
-    policy.updated_at = datetime.utcnow()
-
+    for field in ("schedule_matrix", "blocked_apps", "blocked_domains", "blocked_categories"):
+        value = getattr(req, field)
+        if value is not None:
+            setattr(policy, field, value)
+    after = {field: getattr(policy, field) for field in POLICY_FIELDS}
+    old, new = audit.diff(before, after)
+    if new:
+        policy.version += 1
+        policy.updated_at = datetime.utcnow()
+        audit.record(db, principal, "policy_updated", child_id=child.id, ip=client_ip(request), old=old, new=new)
     db.commit()
     db.refresh(policy)
-
-    # Bắn tín hiệu WebSocket thông báo Agent đồng bộ ngay lập tức (< 1s)
-    await manager.broadcast({
-        "cmd": "sync_policy",
-        "child_id": policy.child_id,
-        "version": policy.version,
-        "child_name": policy.child_name,
-        "lock_pin": policy.lock_pin
-    })
-
-    return {
-        "status": "success", 
-        "policy_version": policy.version,
-        "child_name": policy.child_name,
-        "lock_pin": policy.lock_pin
-    }
+    await manager.send_to_child_devices({"cmd": "sync_policy", "child_id": child.id, "version": policy.version}, child.id)
+    return {"status": "success", "policy_version": policy.version}
 
 
-# ==========================================
-# 1.1 API CẤU HÌNH THÔNG TIN BÉ & MÃ PIN KHÓA MÁY
-# ==========================================
-@router.post("/api/settings/initialize")
-@router.post("/api/settings/update")
-@router.post("/api/auth/setup")
-@router.post("/api/auth/initialize")
-def update_settings(req: SettingsUpdateSchema, background_tasks: BackgroundTasks = None, db: Session = Depends(get_db)):
-    """Cập nhật / Khởi tạo Tên bé và Mã PIN khóa máy từ Dashboard Phụ huynh, đồng bộ tức thì qua WebSocket."""
-    policy = db.query(Policy).filter(Policy.child_id == req.child_id).first()
-    if not policy:
-        policy = Policy(child_id=req.child_id)
-        db.add(policy)
+@router.post("/policy/deduct-time")
+async def deduct_child_time(req: DeductTimeSchema, request: Request, principal: Principal = Depends(require_parent),
+                            db: Session = Depends(get_db)):
+    child = authorize_child(db, principal, req.child_id)
+    policy = get_or_create_policy(db, child)
+    remaining = time_snapshot(child.id, datetime.now().date(), db)["remaining_seconds"]
+    deducted = min(req.deduct_min, (remaining + 59) // 60)
+    if deducted:
+        adjust_today(db, child.id, -deducted)
+        audit.record(db, principal, "time_deducted", child_id=child.id, ip=client_ip(request),
+                     new={"minutes": deducted, "reason": req.reason})
+    db.commit()
+    await manager.notify_child({
+        "cmd": "time_deducted", "child_id": child.id, "deduct_min": deducted, "reason": req.reason,
+        "adjustment_date": datetime.now().date().isoformat(),
+    }, child.id)
+    return {"status": "success", "deducted_minutes": deducted, "policy_version": policy.version,
+            "message": f"Đã giảm {deducted} phút của trẻ"}
 
-    new_name = req.child_name.strip()
-    new_pin = req.lock_pin.strip()
 
-    if not new_name:
-        raise HTTPException(status_code=400, detail="Vui lòng nhập tên của trẻ")
-    if not new_pin or len(new_pin) < 4 or len(new_pin) > 6:
-        raise HTTPException(status_code=400, detail="Mã PIN quản lý phải có độ dài từ 4 đến 6 chữ số")
-
-    policy.child_name = new_name
-    policy.lock_pin = new_pin
-    policy.lock_password_hash = hashlib.sha256(new_pin.encode("utf-8")).hexdigest()
+@router.post("/policy/pause")
+async def start_parent_pause(req: PauseSchema, request: Request, principal: Principal = Depends(require_parent),
+                             db: Session = Depends(get_db)):
+    """Chế độ tạm nghỉ của phụ huynh: tạm ngưng giới hạn tối đa 2 giờ, có ghi audit log."""
+    child = authorize_child(db, principal, req.child_id)
+    policy = get_or_create_policy(db, child)
+    policy.paused_until = datetime.utcnow() + timedelta(minutes=req.minutes)
     policy.version += 1
-    policy.updated_at = datetime.utcnow()
-
-    # Đồng bộ sang bảng Child nếu tồn tại
-    child = db.query(Child).filter(Child.id == req.child_id).first()
-    if child:
-        child.name = new_name
-
+    add_event(db, child.id, "parent-dashboard", "override_granted", f"Tạm nghỉ giới hạn {req.minutes} phút", policy.id)
+    audit.record(db, principal, "parent_pause_started", child_id=child.id, ip=client_ip(request),
+                 new={"minutes": req.minutes, "until": policy.paused_until.isoformat() + "Z"})
     db.commit()
-    db.refresh(policy)
-
-    # Phát tín hiệu WebSocket cho cả Dashboard phụ huynh và Cửa sổ trẻ em trong Background
-    if background_tasks:
-        background_tasks.add_task(manager.broadcast, {
-            "cmd": "init_completed",
-            "child_id": policy.child_id,
-            "child_name": policy.child_name,
-            "lock_pin": policy.lock_pin,
-            "version": policy.version
-        })
-        background_tasks.add_task(manager.broadcast, {
-            "cmd": "settings_updated",
-            "child_id": policy.child_id,
-            "child_name": policy.child_name,
-            "lock_pin": policy.lock_pin,
-            "version": policy.version
-        })
-
-    return {
-        "status": "success",
-        "success": True,
-        "child_id": policy.child_id,
-        "child_name": policy.child_name,
-        "lock_pin": policy.lock_pin,
-        "version": policy.version,
-        "is_initialized": True,
-        "is_configured": True,
-        "message": f"Đã lưu thành công thông tin bé '{policy.child_name}' và mã PIN bảo vệ."
-    }
+    payload = policy_payload(db, policy)
+    await manager.notify_child({"cmd": "sync_policy", "child_id": child.id, "version": policy.version,
+                                "paused_until": payload["paused_until"]}, child.id)
+    return {"status": "success", "paused_until": payload["paused_until"]}
 
 
-@router.get("/api/auth/status")
-@router.get("/api/auth/status/{child_id}")
-@router.get("/api/settings/{child_id}")
-def get_auth_settings(child_id: int = 1, db: Session = Depends(get_db)):
-    """Kiểm tra trạng thái xác thực: Phân biệt rạch ròi Trường hợp A (Hệ thống mới) và Trường hợp B (Đã có PIN)."""
-    policy = db.query(Policy).filter(Policy.child_id == child_id).first()
-    child_name = (policy.child_name or "").strip() if policy and policy.child_name else ""
-    lock_pin = (policy.lock_pin or "").strip() if policy and policy.lock_pin else ""
-    lock_hash = (policy.lock_password_hash or "").strip() if policy and policy.lock_password_hash else ""
-    
-    # RẠCH RÒI 2 TRƯỜNG HỢP:
-    # Trường hợp A: Hệ thống mới nếu chưa có Tên bé HOẶC chưa có Mã PIN
-    # Trường hợp B: Hệ thống đã có tên bé VÀ có mã PIN (plain hoặc hash)
-    has_pin = bool(lock_pin or lock_hash)
-    is_initialized = bool(child_name and has_pin)
-    
-    # Kiểm tra xem có kết nối phụ huynh đang trực tuyến không
-    parent_online = any(str(k).startswith("parent_") for k in manager.active_connections.keys())
-    
-    return {
-        "status": "success",
-        "success": True,
-        "child_id": child_id,
-        "child_name": child_name,
-        "lock_pin": lock_pin,
-        "has_pin": has_pin,
-        "is_initialized": is_initialized,
-        "is_configured": is_initialized,
-        "parent_authenticated": parent_online
-    }
-
-get_settings = get_auth_settings
-
-
-@router.post("/api/system/reset")
-def reset_system_state(db: Session = Depends(get_db)):
-    """Reset trạng thái hệ thống về Trường hợp A (sạch) để kiểm thử luồng khởi tạo ban đầu."""
-    policy = db.query(Policy).filter(Policy.child_id == 1).first()
-    if policy:
-        policy.child_name = None
-        policy.lock_pin = None
-        policy.lock_password_hash = None
-        policy.version = 1
-    db.query(ChildWindowLock).filter_by(child_id=1).delete()
-    child = db.query(Child).filter(Child.id == 1).first()
-    if child:
-        child.name = None
-    db.commit()
-    return {
-        "status": "success",
-        "success": True,
-        "message": "Đã reset hệ thống về trạng thái sạch (Trường hợp A: Chưa có Tên bé và chưa có Mã PIN)"
-    }
-
-
-@router.post("/api/auth/verify-pin")
-@router.post("/api/auth/login")
-@router.post("/api/settings/verify-pin")
-def verify_pin(req: VerifyPinSchema, db: Session = Depends(get_db)):
-    """Xác thực mã PIN mở khóa:
-    - So khớp trực tiếp plain text nếu lưu thô
-    - So khớp hàm băm SHA-256 nếu lưu mã băm
-    - Trả về chuẩn xác {"success": True, "message": "...", "child_name": ...}
-    """
-    child_id = req.child_id or 1
-    policy = db.query(Policy).filter(Policy.child_id == child_id).first()
-    saved_pin = str(policy.lock_pin or "").strip() if policy and policy.lock_pin else ""
-    saved_hash = str(policy.lock_password_hash or "").strip() if policy and policy.lock_password_hash else ""
-
-    if not policy or not (saved_pin or saved_hash):
-        return {
-            "success": False,
-            "status": "failed",
-            "valid": False,
-            "verified": False,
-            "message": "Chưa có mã PIN phụ huynh nào được thiết lập!",
-            "child_name": ""
-        }
-
-    input_pin = (req.pin or req.password or req.lock_pin or "").strip()
-    if not input_pin:
-        return {
-            "success": False,
-            "status": "failed",
-            "valid": False,
-            "verified": False,
-            "message": "Vui lòng nhập mã PIN bảo mật!",
-            "child_name": policy.child_name or ""
-        }
-
-    input_hash = hashlib.sha256(input_pin.encode("utf-8")).hexdigest()
-
-    # 1. So khớp plain text
-    is_valid = False
-    if saved_pin and input_pin == saved_pin:
-        is_valid = True
-    # 2. So khớp hash SHA-256
-    elif saved_hash and input_hash == saved_hash:
-        is_valid = True
-    elif saved_pin and input_hash == saved_pin:
-        is_valid = True
-
-    if is_valid and req.unlock_window:
-        db.query(ChildWindowLock).filter_by(child_id=child_id).delete()
+@router.delete("/policy/pause/{child_id}")
+async def end_parent_pause(child_id: int, request: Request, principal: Principal = Depends(require_parent),
+                           db: Session = Depends(get_db)):
+    child = authorize_child(db, principal, child_id)
+    policy = get_or_create_policy(db, child)
+    if policy.paused_until:
+        policy.paused_until = None
+        policy.version += 1
+        audit.record(db, principal, "parent_pause_ended", child_id=child.id, ip=client_ip(request))
         db.commit()
+    await manager.notify_child({"cmd": "sync_policy", "child_id": child.id, "version": policy.version,
+                                "paused_until": None}, child.id)
+    return {"status": "success"}
 
-    if is_valid:
-        # Bắn WebSocket init_completed cho tất cả cửa sổ trẻ em tự động mở
-        try:
-            import asyncio
-            loop = asyncio.get_running_loop()
-            loop.create_task(manager.broadcast({
-                "cmd": "init_completed",
-                "child_id": child_id,
-                "child_name": policy.child_name or "",
-                "lock_pin": policy.lock_pin or "",
-                "version": policy.version
-            }))
-        except Exception:
-            pass
 
-    return {
-        "success": is_valid,
-        "status": "success" if is_valid else "failed",
-        "valid": is_valid,
-        "verified": is_valid,
-        "message": "Xác thực thành công" if is_valid else "Mã PIN không chính xác. Vui lòng thử lại!",
-        "child_name": policy.child_name or ""
+# ==========================================
+# 2. GIÁM SÁT MÀN HÌNH & LỊCH SỬ TRUY CẬP
+# ==========================================
+@router.post("/agent/launch-app")
+def launch_desktop_app(req: LaunchAppSchema):
+    """Mô phỏng mở ứng dụng an toàn cho trẻ — không khởi chạy phần mềm thật trên Windows."""
+    app_whitelist = {
+        "calc": "Máy tính Casio", "calculator": "Máy tính Casio", "notepad": "Sổ tay Ghi chú",
+        "paint": "MS Paint Vẽ hình", "mspaint": "MS Paint Vẽ hình", "wordpad": "WordPad Soạn thảo",
+        "write": "WordPad Soạn thảo", "osk": "Bàn phím ảo",
     }
+    app_key = req.app_id.strip().lower()
+    if app_key not in app_whitelist:
+        raise HTTPException(status_code=400, detail=f"Ứng dụng '{req.app_id}' không nằm trong danh mục được phép mở an toàn.")
+    return {"status": "success", "app_id": app_key, "app_name": app_whitelist[app_key],
+            "message": f"Đang mô phỏng ứng dụng {app_whitelist[app_key]}"}
 
 
-# ==========================================
-# 1.2 API LỊCH SỬ QUAN SÁT MÀN HÌNH (MONITORING SESSIONS)
-# ==========================================
 @router.post("/api/monitoring/start")
-def start_monitoring_session(req: MonitoringStartSchema, db: Session = Depends(get_db)):
-    """Bắt đầu phiên theo dõi màn hình trẻ."""
-    session = MonitoringSession(
-        child_id=req.child_id,
-        device_id=req.device_id,
-        start_time=datetime.utcnow(),
-        status="Đang theo dõi"
-    )
+def start_monitoring_session(req: MonitoringStartSchema, request: Request, principal: Principal = Depends(require_parent),
+                             db: Session = Depends(get_db)):
+    child = authorize_child(db, principal, req.child_id)
+    session = MonitoringSession(child_id=child.id, device_id=req.device_id, start_time=datetime.utcnow())
     db.add(session)
+    audit.record(db, principal, "screen_view_requested", child_id=child.id, ip=client_ip(request))
     db.commit()
     db.refresh(session)
-    return {
-        "status": "success",
-        "session_id": session.id,
-        "start_time": session.start_time.strftime("%H:%M:%S %d/%m/%Y")
-    }
+    return {"status": "success", "session_id": session.id, "start_time": local_text(session.start_time)}
 
 
 @router.post("/api/monitoring/stop")
-def stop_monitoring_session(req: MonitoringStopSchema, db: Session = Depends(get_db)):
-    """Kết thúc phiên theo dõi màn hình trẻ."""
-    query = db.query(MonitoringSession).filter(MonitoringSession.child_id == req.child_id)
+def stop_monitoring_session(req: MonitoringStopSchema, principal: Principal = Depends(require_parent),
+                            db: Session = Depends(get_db)):
+    child = authorize_child(db, principal, req.child_id)
+    query = db.query(MonitoringSession).filter(MonitoringSession.child_id == child.id)
     if req.session_id:
         session = query.filter(MonitoringSession.id == req.session_id).first()
     else:
         session = query.filter(MonitoringSession.status == "Đang theo dõi").order_by(MonitoringSession.start_time.desc()).first()
-
+    if not session:
+        return {"status": "success", "duration_sec": 0, "message": "Không tìm thấy phiên cần đóng"}
     now = datetime.utcnow()
-    duration = 0
-    if session:
-        session.end_time = now
-        duration = max(0, int((now - session.start_time).total_seconds()))
-        session.duration_sec = duration
-        session.status = "Đã kết thúc"
-        db.commit()
-        db.refresh(session)
-        return {
-            "status": "success",
-            "session_id": session.id,
-            "duration_sec": duration,
-            "end_time": session.end_time.strftime("%H:%M:%S %d/%m/%Y")
-        }
-
-    return {"status": "success", "duration_sec": 0, "message": "Không tìm thấy phiên cần đóng"}
+    session.end_time = now
+    session.duration_sec = max(0, int((now - session.start_time).total_seconds()))
+    session.status = "Đã kết thúc"
+    db.commit()
+    return {"status": "success", "session_id": session.id, "duration_sec": session.duration_sec,
+            "end_time": local_text(now)}
 
 
 @router.get("/api/monitoring/history/{child_id}")
-def get_monitoring_history(child_id: int, limit: int = 30, db: Session = Depends(get_db)):
-    """Lấy danh sách các phiên quan sát màn hình."""
-    sessions = (
-        db.query(MonitoringSession)
-        .filter(MonitoringSession.child_id == child_id)
-        .order_by(MonitoringSession.start_time.desc())
-        .limit(limit)
-        .all()
-    )
-    return [
-        {
-            "id": s.id,
-            "start_time": s.start_time.strftime("%H:%M:%S %d/%m/%Y"),
-            "end_time": s.end_time.strftime("%H:%M:%S %d/%m/%Y") if s.end_time else "-",
-            "duration": f"{s.duration_sec} giây" if s.duration_sec else ("Đang theo dõi" if s.status == "Đang theo dõi" else "-"),
-            "status": s.status
-        }
-        for s in sessions
-    ]
-
-
-# ==========================================
-# 1.3 API NHẬT KÝ TRUY CẬP THIẾT BỊ (ACCESS HISTORY LOG)
-# ==========================================
-@router.post("/api/access-log")
-def create_access_log(req: AccessLogCreateSchema, db: Session = Depends(get_db)):
-    """Ghi nhận lịch sử truy cập ứng dụng/web của trẻ."""
-    log = AccessHistoryLog(
-        child_id=req.child_id,
-        device_id=req.device_id,
-        ts=datetime.utcnow(),
-        target_name=req.target_name.strip(),
-        target_type=req.target_type.strip(),
-        status=req.status.strip()
-    )
-    db.add(log)
-
-    # Ghi đồng thời vào DeviceEvent để tương thích kiểm toán 7 trường
-    ev_type = "app_start" if req.target_type == "Ứng dụng" and req.status == "allowed" else (
-        "blocked_app" if req.target_type == "Ứng dụng" else (
-            "web_visit" if req.status == "allowed" else "blocked_domain"
-        )
-    )
-    db.add(DeviceEvent(
-        ts=log.ts,
-        device_id=req.device_id,
-        child_id=req.child_id,
-        type=ev_type,
-        subject=req.target_name,
-        duration_sec=0
-    ))
-
-    db.commit()
-    db.refresh(log)
-    return {"status": "success", "id": log.id}
+def get_monitoring_history(child_id: int, limit: int = 30, principal: Principal = Depends(require_parent),
+                           db: Session = Depends(get_db)):
+    child = authorize_child(db, principal, child_id)
+    sessions = (db.query(MonitoringSession).filter(MonitoringSession.child_id == child.id)
+                .order_by(MonitoringSession.start_time.desc()).limit(min(limit, 200)).all())
+    return [{
+        "id": s.id,
+        "start_time": local_text(s.start_time),
+        "end_time": local_text(s.end_time) if s.end_time else "-",
+        "duration": f"{s.duration_sec} giây" if s.duration_sec else ("Đang theo dõi" if s.status == "Đang theo dõi" else "-"),
+        "status": s.status,
+    } for s in sessions]
 
 
 @router.get("/api/access-history/{child_id}")
-def get_access_history(child_id: int, limit: int = 30, db: Session = Depends(get_db)):
-    """Lấy danh sách lịch sử truy cập thiết bị của trẻ."""
-    logs = (
-        db.query(AccessHistoryLog)
-        .filter(AccessHistoryLog.child_id == child_id)
-        .order_by(AccessHistoryLog.ts.desc())
-        .limit(limit)
-        .all()
-    )
-    if logs:
-        return [
-            {
-                "id": l.id,
-                "ts": l.ts.strftime("%H:%M:%S %d/%m/%Y"),
-                "target_name": l.target_name,
-                "target_type": l.target_type,
-                "status": l.status,
-                "status_label": "✅ Hợp lệ" if l.status == "allowed" else "⛔ Bị chặn"
-            }
-            for l in logs
-        ]
-
-    # Fallback từ DeviceEvent nếu AccessHistoryLog chưa có bản ghi nào
-    events = (
-        db.query(DeviceEvent)
-        .filter(
-            DeviceEvent.child_id == child_id,
-            DeviceEvent.type.in_(("app_start", "blocked_app", "web_visit", "blocked_domain", "query_filter", "blocked_keyword"))
-        )
-        .order_by(DeviceEvent.ts.desc())
-        .limit(limit)
-        .all()
-    )
-    return [
-        {
-            "id": e.id,
-            "ts": e.ts.strftime("%H:%M:%S %d/%m/%Y"),
-            "target_name": e.subject,
-            "target_type": "Ứng dụng" if "app" in e.type else "Trang web",
-            "status": "blocked" if "block" in e.type or "filter" in e.type else "allowed",
-            "status_label": "⛔ Bị chặn" if ("block" in e.type or "filter" in e.type) else "✅ Hợp lệ"
-        }
-        for e in events
-    ]
+def get_access_history(child_id: int, limit: int = 30, principal: Principal = Depends(require_parent),
+                       db: Session = Depends(get_db)):
+    child = authorize_child(db, principal, child_id)
+    logs = (db.query(AccessHistoryLog).filter(AccessHistoryLog.child_id == child.id)
+            .order_by(AccessHistoryLog.ts.desc()).limit(min(limit, 200)).all())
+    return [{
+        "id": log.id,
+        "ts": local_text(log.ts),
+        "target_name": log.target_name,
+        "target_type": log.target_type,
+        "status": log.status,
+        "status_label": "✅ Hợp lệ" if log.status == "allowed" else "⛔ Bị chặn",
+    } for log in logs]
 
 
-
-@router.post("/agent/launch-app")
-def launch_desktop_app(req: LaunchAppSchema):
-    """Mô phỏng mở ứng dụng an toàn cho trẻ - Tuyệt đối không can thiệp hay khởi chạy phần mềm thật ngoài Windows OS."""
-    app_whitelist = {
-        "calc": "Máy tính Casio",
-        "calculator": "Máy tính Casio",
-        "notepad": "Sổ tay Ghi chú",
-        "paint": "MS Paint Vẽ hình",
-        "mspaint": "MS Paint Vẽ hình",
-        "wordpad": "WordPad Soạn thảo",
-        "write": "WordPad Soạn thảo",
-        "osk": "Bàn phím ảo",
-    }
-    
-    app_key = req.app_id.strip().lower()
-    if app_key not in app_whitelist:
-        raise HTTPException(status_code=400, detail=f"Ứng dụng '{req.app_id}' không nằm trong danh mục được phép mở an toàn.")
-    
-    return {
-        "status": "success",
-        "app_id": app_key,
-        "app_name": app_whitelist[app_key],
-        "message": f"Đang mô phỏng ứng dụng {app_whitelist[app_key]}"
-    }
+# ==========================================
+# 3. TIẾP NHẬN SỰ KIỆN 7 TRƯỜNG (CÓ KHÓA CHỐNG TRÙNG)
+# ==========================================
+def add_event(db: Session, child_id: int, device_id: str, event_type: str, subject: str,
+              policy_id: Optional[int] = None, duration_sec: int = 0, key: Optional[str] = None,
+              ts: Optional[datetime] = None) -> bool:
+    """Ghi một sự kiện; trả về False nếu khóa chống trùng đã tồn tại (gửi bù sau khi mất mạng)."""
+    statement = insert(DeviceEvent).values(
+        ts=ts or datetime.utcnow(), device_id=device_id, child_id=child_id, type=event_type,
+        subject=subject[:255], duration_sec=duration_sec, policy_id=policy_id, idempotency_key=key,
+    ).on_conflict_do_nothing()
+    return db.execute(statement).rowcount > 0
 
 
-@router.post("/policy/deduct-time")
-async def deduct_child_time(req: DeductTimeSchema, db: Session = Depends(get_db)):
-    """Trừ bớt thời gian giải trí thời gian thực từ phía Phụ huynh."""
-    policy = db.query(Policy).filter(Policy.child_id == req.child_id).first()
-    if not policy:
-        raise HTTPException(status_code=404, detail="Không tìm thấy chính sách của trẻ")
-    remaining = time_snapshot(req.child_id, datetime.now().date(), db)["remaining_seconds"]
-    deducted = min(req.deduct_min, (remaining + 59) // 60)
-    if deducted:
-        adjust_today(db, req.child_id, -deducted)
+async def ingest_events(db: Session, principal: Principal, items: List[EventCreateSchema], request: Request) -> dict:
+    device_id = principal.device_id or "web-portal"
+    accepted, duplicates, rejected = 0, 0, 0
+    alerts = []
+    for item in items:
+        if item.type == "clock_tamper":
+            audit.record(db, principal, "clock_tamper", child_id=principal.child_id, ip=client_ip(request),
+                         new={"detail": item.subject, "skew_sec": item.duration_sec})
+            accepted += 1
+            continue
+        event_type = normalize_event_type(item.type)
+        if not event_type:
+            rejected += 1
+            continue
+        ts = item.ts if item.ts.tzinfo is None else datetime.utcfromtimestamp(item.ts.timestamp())
+        if add_event(db, principal.child_id, device_id, event_type, item.subject, item.policy_id,
+                     item.duration_sec, item.idempotency_key, ts):
+            accepted += 1
+            if event_type in VIOLATION_TYPES or event_type == "quota_warning":
+                alerts.append({"type": event_type, "subject": item.subject})
+        else:
+            duplicates += 1
     db.commit()
-    db.refresh(policy)
-
-    # Phát thông báo WebSocket time_deducted thời gian thực xuống máy con
-    await manager.broadcast({
-        "cmd": "time_deducted",
-        "child_id": req.child_id,
-        "deduct_min": deducted,
-        "reason": req.reason,
-        "adjustment_date": datetime.now().date().isoformat()
-    })
-
-    return {
-        "status": "success",
-        "deducted_minutes": deducted,
-        "daily_quota_weekday_min": policy.daily_quota_weekday_min,
-        "daily_quota_weekend_min": policy.daily_quota_weekend_min,
-        "policy_version": policy.version,
-        "message": f"Đã giảm {deducted} phút của trẻ thành công"
-    }
+    for alert in alerts:
+        await manager.send_to_parents({"cmd": "violation_toast", "child_id": principal.child_id, **alert,
+                                       "message": f"{alert['subject']} ({alert['type']})"}, principal.child_id)
+        if principal.device_id and alert["type"] in ("blocked_app", "blocked_domain"):
+            # Agent không mở popup hệ điều hành: lý do chặn hiển thị cho trẻ ngay trong Cổng học tập
+            what = "Ứng dụng" if alert["type"] == "blocked_app" else "Trang web"
+            await manager.send_to_children({
+                "cmd": "violation_toast", "child_id": principal.child_id, "type": alert["type"],
+                "message": f"{what} {alert['subject']} nằm trong danh sách ba mẹ đã chặn nên đã bị đóng lại."},
+                principal.child_id)
+    return {"status": "success", "recorded_count": accepted, "duplicate_count": duplicates, "rejected_count": rejected}
 
 
-# ==========================================
-# 2. API TIẾP NHẬN SỰ KIỆN (EVENTS - 7 TRƯỜNG)
-# ==========================================
 @router.post("/events/", status_code=status.HTTP_201_CREATED)
-def receive_event_single(event_data: Union[EventCreateSchema, List[EventCreateSchema]], db: Session = Depends(get_db)):
-    """Tiếp nhận một hoặc nhiều sự kiện từ Agent theo chuẩn 7 trường."""
-    if isinstance(event_data, list):
-        items = event_data
-    else:
-        items = [event_data]
-
-    new_events = [
-        DeviceEvent(
-            ts=ev.ts,
-            device_id=ev.device_id,
-            child_id=ev.child_id,
-            type=ev.type,
-            subject=ev.subject,
-            duration_sec=ev.duration_sec,
-            policy_id=ev.policy_id,
-        )
-        for ev in items
-    ]
-    db.add_all(new_events)
-    db.commit()
-
-    # Bắn thông báo Toast thời gian thực lên Web UI (100% Zero-OS Popup)
-    import asyncio
-    for ev in items:
-        if ev.type in ("blocked_app", "blocked_domain", "blocked_keyword", "query_filter", "clock_tamper", "locked"):
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    loop.create_task(manager.broadcast({
-                        "cmd": "violation_toast",
-                        "type": ev.type,
-                        "subject": ev.subject,
-                        "message": f"Phát hiện chặn: {ev.subject} ({ev.type})"
-                    }))
-            except Exception:
-                pass
-
-    return {"status": "success", "recorded_count": len(new_events)}
+async def receive_events(event_data: Union[EventCreateSchema, List[EventCreateSchema]], request: Request,
+                         principal: Principal = Depends(require_device), db: Session = Depends(get_db)):
+    items = event_data if isinstance(event_data, list) else [event_data]
+    return await ingest_events(db, principal, items[:500], request)
 
 
 @router.post("/events/batch", status_code=status.HTTP_201_CREATED)
-def receive_events_batch(events: List[EventCreateSchema], db: Session = Depends(get_db)):
-    """Tiếp nhận sự kiện theo lô từ máy con Agent (kể cả khi vừa kết nối mạng lại)."""
-    return receive_event_single(events, db)
+async def receive_events_batch(events: List[EventCreateSchema], request: Request,
+                               principal: Principal = Depends(require_device), db: Session = Depends(get_db)):
+    return await ingest_events(db, principal, events[:500], request)
 
 
 @router.get("/events/violations/{child_id}")
-def get_violation_events(child_id: int, limit: int = 50, db: Session = Depends(get_db)):
-    """Lấy danh sách các sự kiện vi phạm mới nhất phục vụ Bảng nhật ký thời gian thực."""
-    violation_types = [
-        "blocked_app",
-        "blocked_domain",
-        "blocked_keyword",
-        "query_filter",
-        "clock_tamper",
-        "locked",
-        "quota_exceeded"
-    ]
-    events = (
-        db.query(DeviceEvent)
-        .filter(DeviceEvent.child_id == child_id, DeviceEvent.type.in_(violation_types))
-        .order_by(DeviceEvent.ts.desc())
-        .limit(limit)
-        .all()
-    )
-    return [
-        {
-            "id": e.id,
-            "ts": e.ts.strftime("%H:%M:%S %d/%m/%Y"),
-            "device_id": e.device_id,
-            "type": e.type,
-            "subject": e.subject,
-            "duration_sec": e.duration_sec,
-            "action": (
-                "Đã dừng tiến trình" if e.type == "blocked_app"
-                else (
-                    "Chặn từ khóa cấm" if e.type in ("blocked_keyword", "query_filter")
-                    else ("Đã khóa máy" if e.type in ("locked", "quota_exceeded") else "Sinkhole 0.0.0.0")
-                )
-            )
-        }
-        for e in events
-    ]
-
-
-@router.get("/events/summary/{child_id}")
-def get_usage_summary(child_id: int, db: Session = Depends(get_db)):
-    """Tổng hợp sơ bộ thời gian sử dụng phục vụ kiểm toán."""
-    events = db.query(DeviceEvent).filter(DeviceEvent.child_id == child_id).all()
-    total_seconds = sum(e.duration_sec for e in events)
-    return {
-        "child_id": child_id,
-        "total_usage_minutes": round(total_seconds / 60, 1),
-        "total_events_logged": len(events),
-    }
+def get_violation_events(child_id: int, limit: int = 50, principal: Principal = Depends(require_parent),
+                         db: Session = Depends(get_db)):
+    child = authorize_child(db, principal, child_id)
+    events = (db.query(DeviceEvent).filter(DeviceEvent.child_id == child.id, DeviceEvent.type.in_(VIOLATION_TYPES))
+              .order_by(DeviceEvent.ts.desc()).limit(min(limit, 200)).all())
+    actions = {"blocked_app": "Đã dừng tiến trình", "blocked_domain": "Đã chặn truy cập", "locked": "Đã khóa máy"}
+    return [{
+        "id": e.id, "ts": local_text(e.ts), "device_id": e.device_id, "type": e.type,
+        "subject": e.subject, "duration_sec": e.duration_sec, "action": actions[e.type],
+    } for e in events]
 
 
 # ==========================================
-# 3. QUẢN TRỊ DỮ LIỆU & QUYỀN RIÊNG TƯ (NĐ 13/2023)
+# 4. VÒNG ĐỜI DỮ LIỆU (NĐ 13/2023)
 # ==========================================
-@router.delete("/events/cleanup-old-records")
-def cleanup_old_events(db: Session = Depends(get_db)):
-    """Xóa tự động các sự kiện cũ hơn 90 ngày theo hạn mức lưu trữ F3."""
-    cutoff_date = datetime.utcnow() - timedelta(days=90)
-    deleted_rows = db.query(DeviceEvent).filter(DeviceEvent.ts < cutoff_date).delete()
-    db.query(WebDailyUsage).filter(WebDailyUsage.day < (datetime.now().date() - timedelta(days=90))).delete()
-    db.query(DailyTimeAdjustment).filter(DailyTimeAdjustment.day < cutoff_date.date()).delete()
+def purge_older_than(db: Session, days: int = config.RETENTION_DAYS) -> int:
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff_day = (datetime.now() - timedelta(days=days)).date()
+    deleted = db.query(DeviceEvent).filter(DeviceEvent.ts < cutoff).delete(synchronize_session=False)
+    deleted += db.query(AccessHistoryLog).filter(AccessHistoryLog.ts < cutoff).delete(synchronize_session=False)
+    deleted += db.query(MonitoringSession).filter(MonitoringSession.start_time < cutoff).delete(synchronize_session=False)
+    deleted += db.query(TimeRequest).filter(TimeRequest.created_at < cutoff).delete(synchronize_session=False)
+    deleted += db.query(AuditLog).filter(AuditLog.ts < cutoff).delete(synchronize_session=False)
+    deleted += db.query(WebDailyUsage).filter(WebDailyUsage.day < cutoff_day).delete(synchronize_session=False)
+    deleted += db.query(AgentDailyUsage).filter(AgentDailyUsage.day < cutoff_day).delete(synchronize_session=False)
+    deleted += db.query(DailyTimeAdjustment).filter(DailyTimeAdjustment.day < cutoff_day).delete(synchronize_session=False)
     db.commit()
-    return {"status": "success", "deleted_records_count": deleted_rows}
+    return deleted
+
+
+@router.delete("/events/cleanup-old-records")
+def cleanup_old_events(principal: Principal = Depends(require_admin), db: Session = Depends(get_db)):
+    return {"status": "success", "deleted_records_count": purge_older_than(db)}
 
 
 @router.delete("/data/purge-child/{child_id}")
-def purge_child_data(child_id: int, db: Session = Depends(get_db)):
-    """Quyền được quên (Right to be Forgotten): Xóa toàn bộ dữ liệu của một trẻ."""
-    del_events = db.query(DeviceEvent).filter(DeviceEvent.child_id == child_id).delete()
-    db.query(WebDailyUsage).filter(WebDailyUsage.child_id == child_id).delete()
-    db.query(DailyTimeAdjustment).filter(DailyTimeAdjustment.child_id == child_id).delete()
-    db.query(ChildWindowLock).filter_by(child_id=child_id).delete()
-    del_policies = db.query(Policy).filter(Policy.child_id == child_id).delete()
+async def purge_child_data(child_id: int, request: Request, principal: Principal = Depends(require_parent),
+                           db: Session = Depends(get_db)):
+    """Quyền được xóa: xóa toàn bộ dữ liệu hoạt động của trẻ trên máy chủ và bộ nhớ đệm của Agent."""
+    child = authorize_child(db, principal, child_id)
+    counts = {}
+    for model in (DeviceEvent, AccessHistoryLog, MonitoringSession, TimeRequest, WebDailyUsage,
+                  AgentDailyUsage, DailyTimeAdjustment, AuditLog):
+        counts[model.__tablename__] = db.query(model).filter(model.child_id == child.id).delete(synchronize_session=False)
+    db.query(ChildWindowLock).filter_by(child_id=child.id).delete()
+    audit.record(db, principal, "data_purged", child_id=child.id, ip=client_ip(request), new=counts)
     db.commit()
-    return {
-        "status": "success",
-        "message": f"Đã xóa vĩnh viễn toàn bộ dữ liệu liên quan đến trẻ ID {child_id}",
-        "events_deleted": del_events,
-        "policies_deleted": del_policies,
-    }
+    await manager.send_to_agents({"cmd": "purge_cache", "child_id": child.id}, child.id)
+    return {"status": "success", "deleted": counts,
+            "message": f"Đã xóa toàn bộ dữ liệu hoạt động của trẻ và yêu cầu Agent xóa bộ nhớ đệm"}
 
 
 # ==========================================
-# 4. SỐ LIỆU ĐỘNG CHO WEB DASHBOARD
+# 5. SỐ LIỆU CHO DASHBOARD
 # ==========================================
-def daily_usage_seconds(child_id: int, day: date, db: Session) -> int:
-    start = datetime.combine(day, datetime.min.time())
-    end = start + timedelta(days=1)
-    # Agent timestamps are stored as naive UTC; day boundaries use server local time.
-    start_utc = datetime.utcfromtimestamp(start.timestamp())
-    end_utc = datetime.utcfromtimestamp(end.timestamp())
-    live_usage = db.query(AgentDailyUsage).filter_by(child_id=child_id, day=day)
-    measured_seconds = live_usage.with_entities(func.sum(AgentDailyUsage.used_seconds)).scalar() or 0
-    legacy_seconds = db.query(func.sum(DeviceEvent.duration_sec)).filter(
-        DeviceEvent.child_id == child_id, DeviceEvent.type == "app_stop",
-        DeviceEvent.ts >= start_utc, DeviceEvent.ts < end_utc,
-        DeviceEvent.device_id.not_in(live_usage.with_entities(AgentDailyUsage.device_id).statement),
-    ).scalar() or 0
-    web = db.get(WebDailyUsage, (child_id, day))
-    # Both sources can observe the same activity, so avoid adding overlapping usage.
-    return max(0, measured_seconds + legacy_seconds, int(web.used_seconds) if web else 0)
-
-
-def time_snapshot(child_id: int, day: date, db: Session) -> dict:
-    policy = db.query(Policy).filter(Policy.child_id == child_id).first()
-    quota = 180 if day.weekday() >= 5 else 120
-    if policy:
-        quota = policy.daily_quota_weekend_min if day.weekday() >= 5 else policy.daily_quota_weekday_min
-    adjustment = adjustment_minutes(db, child_id, day)
-    effective_quota = max(0, quota + adjustment)
-    used = daily_usage_seconds(child_id, day, db)
-    lock = db.get(ChildWindowLock, child_id)
-    return {
-        "lock_reason": lock.reason if lock else None,
-        "today_minutes": used // 60,
-        "today_seconds": used,
-        "quota_minutes": effective_quota,
-        "base_quota_minutes": quota,
-        "adjustment_minutes": adjustment,
-        "remaining_seconds": max(0, effective_quota * 60 - used),
-    }
-
-
-@router.post("/web-usage/{child_id}")
-def track_web_usage(child_id: int, db: Session = Depends(get_db)):
-    now = datetime.now()
-    day = now.date()
-    settings = get_auth_settings(child_id, db)
-    snapshot = time_snapshot(child_id, day, db)
-    if settings["is_initialized"] and not snapshot["lock_reason"] and snapshot["remaining_seconds"] > 0:
-        sample = insert(WebDailyUsage).values(
-            child_id=child_id, day=day, used_seconds=0, last_seen=now.timestamp(),
-        )
-        gap = sample.excluded.last_seen - WebDailyUsage.last_seen
-        db.execute(sample.on_conflict_do_update(
-            index_elements=[WebDailyUsage.child_id, WebDailyUsage.day],
-            set_={
-                "used_seconds": WebDailyUsage.used_seconds + case(
-                    (gap.between(0, 12), gap), else_=0,
-                ),
-                "last_seen": func.max(WebDailyUsage.last_seen, sample.excluded.last_seen),
-            },
-        ))
-        db.commit()
-    return time_snapshot(child_id, day, db)
-
-
 @router.get("/web-usage/{child_id}")
-def get_web_usage(child_id: int, db: Session = Depends(get_db)):
-    return time_snapshot(child_id, datetime.now().date(), db)
+def get_web_usage(child_id: int, principal: Principal = Depends(require_parent), db: Session = Depends(get_db)):
+    child = authorize_child(db, principal, child_id)
+    return time_snapshot(child.id, datetime.now().date(), db)
 
 
 @router.get("/dashboard-stats/{child_id}")
-def get_dashboard_stats(child_id: int, db: Session = Depends(get_db)):
+def get_dashboard_stats(child_id: int, principal: Principal = Depends(require_parent), db: Session = Depends(get_db)):
+    child = authorize_child(db, principal, child_id)
     today = datetime.now().date()
-    snapshot = time_snapshot(child_id, today, db)
+    snapshot = time_snapshot(child.id, today, db)
     days = [today - timedelta(days=i) for i in range(6, -1, -1)]
     return {
         **snapshot,
         "weekly_labels": [day.strftime("%d/%m") for day in days],
-        "weekly_usage": [
-            daily_usage_seconds(child_id, day, db) // 60 for day in days[:-1]
-        ] + [snapshot["today_minutes"]],
+        "weekly_usage": [daily_usage_seconds(child.id, day, db) // 60 for day in days[:-1]] + [snapshot["today_minutes"]],
     }
+

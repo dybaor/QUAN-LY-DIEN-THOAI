@@ -1308,14 +1308,14 @@ fieldset:disabled {
 
 .ogk-timeline-track {
     display: grid;
-    grid-template-columns: repeat(24, minmax(0, 1fr));
+    grid-template-columns: repeat(48, minmax(0, 1fr));
     gap: 1px;
     position: relative;
     height: 12px;
 }
 
 .ogk-timeline-track > span:first-child { border-radius: 4px 0 0 4px; }
-.ogk-timeline-track > span:nth-child(24) { border-radius: 0 4px 4px 0; }
+.ogk-timeline-track > span:nth-child(48) { border-radius: 0 4px 4px 0; }
 
 .ogk-timeline .is-allowed { background: #8dccb8; }
 .ogk-timeline .is-rest { background: #d8ded8; }

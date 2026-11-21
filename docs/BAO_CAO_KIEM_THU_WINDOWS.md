@@ -4,7 +4,7 @@ Ngày 19/11/2026. Môi trường kiểm thử dùng Windows Pro x64, Python 3.13
 
 | Hạng mục | Kết quả quan sát |
 |---|---|
-| Build và khởi chạy | Build hai gói Windows x64. Launcher `server\Start_App.bat --server-only` cài phụ thuộc vào môi trường thử nghiệm riêng. `OGKParent.exe` vào `/`, `OGKChild.exe` vào `/child`, cả hai kết nối cùng FastAPI tại `127.0.0.1:8000`. Đã thử trên máy hiện tại với môi trường Python, SQLite và hồ sơ Electron mới. Chưa thử trên máy Windows vừa cài hệ điều hành. |
+| Build và khởi chạy | Build hai gói Windows x64. Launcher `Start_App.bat --server-only` cài phụ thuộc vào môi trường thử nghiệm riêng. `OGKParent.exe` vào `/`, `OGKChild.exe` vào `/child`, cả hai kết nối cùng FastAPI tại `127.0.0.1:8000`. Đã thử trên máy hiện tại với môi trường Python, SQLite và hồ sơ Electron mới. Chưa thử trên máy Windows vừa cài hệ điều hành. |
 | Agent và số dư | Trong lượt GUI, hai app cùng hiển thị 118 phút trước khi duyệt, 133 phút sau khi duyệt 15 phút và 128 phút sau khi trừ 5 phút. Sau khi tải lại, cả hai vẫn hiển thị 128 phút. Trong lượt đo riêng, Agent chạy chế độ debug trong phiên Windows tương tác và gửi số giây tăng từ 48 lên 53. API của hai app cùng giảm số dư từ 8.952 xuống 8.947 giây. Ngưỡng idle của lượt đo riêng được nâng tạm trong tiến trình kiểm thử vì phiên Windows đã nhàn rỗi hơn 5 phút. Ngưỡng mặc định là 5 phút. Chưa thử đếm giờ khi Agent chạy bằng Windows Service. |
 | Hạn mức ngày mới và SQLite cũ | Mốc thời gian giả lập xác nhận điều chỉnh hết hiệu lực qua ngày mới và gửi lại heartbeat không cộng trùng. Cơ sở dữ liệu đi kèm có hạn mức gốc 120/180. Trên bản sao giả lập dữ liệu cũ bị ghi thành 105/195, server đọc ra đúng các số đã lưu để phụ huynh đối chiếu. Sau khi lưu lại 120/180, gia hạn 10 phút được ghi riêng theo ngày. Giá trị lệch 120/180 có thể là thiết lập hợp lệ của phụ huynh, nên chỉ sửa sau khi đối chiếu. |
 | Thông báo và chia sẻ | Yêu cầu xin giờ xuất hiện trên GUI phụ huynh sau 0,24 giây ở một lượt. Đã nhận khung hình thật rộng 800 px. Trạng thái phụ huynh về chờ khi bấm dừng ở app trẻ, đóng WebSocket và đóng app trẻ. Thử kết nối WebSocket im lặng không trả pong và thấy sự kiện dừng tới phụ huynh sau 10 giây. |
@@ -19,7 +19,7 @@ Ngày 19/11/2026. Môi trường kiểm thử dùng Windows Pro x64, Python 3.13
 
 ## Chạy bản build
 
-Từ thư mục gốc chạy `server\Start_App.bat --server-only`. Giữ nguyên hai thư mục runtime khi sao chép các bản build.
+Từ thư mục gốc chạy `Start_App.bat --server-only`. Giữ nguyên hai thư mục runtime khi sao chép các bản build.
 
 - [OGKParent.exe](../dist/desktop/OGKParent-win32-x64/OGKParent.exe)
 - [OGKChild.exe](../dist/desktop/OGKChild-win32-x64/OGKChild.exe)

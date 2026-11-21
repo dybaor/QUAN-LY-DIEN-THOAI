@@ -5,9 +5,11 @@
  */
 
 // --- 1. BIẾN TRẠNG THÁI TOÀN CỤC ---
-let childId = Number(window.location.pathname?.match(/^\/child\/(\d+)\/?$/)?.[1]) || 1;
+let childId = null; // Lấy từ phiên ghép đôi (cookie HttpOnly), không lấy từ URL
+let csrfToken = null;
 let waitingForSetup = true;
 let manuallyLocked = false;
+let scheduleLocked = false; // Ngoài khung giờ cho phép theo lịch tuần (máy chủ quyết định)
 let usageSyncPending = false;
 let remainingSeconds = 120 * 60; // Mặc định 120 phút
 let totalSeconds = 120 * 60;
@@ -18,14 +20,32 @@ let currentPolicy = null;
 let ws = null;
 let currentCategory = 'all';
 const childChatMessageIds = new Set();
-let configuredParentPin = ""; // Bắt buộc lấy chính xác từ Server / Policy của Phụ huynh
+const WARNING_MINUTES = [10, 5, 1];
+const GRACE_SECONDS = 60;
+const EYE_BREAK_SECONDS = 20 * 60;
+let warnedThresholds = new Set();
+let hadTimeLeft = false;
+let graceDeadline = null;
+let isPaused = false;
+let activeSecondsSinceBreak = 0;
+
+if (typeof window.fetch === 'function' && !window.ogkFetchWrapped) {
+  const nativeFetch = window.fetch.bind(window);
+  window.ogkFetchWrapped = true;
+  window.fetch = async (url, options = {}) => {
+    const method = (options.method || 'GET').toUpperCase();
+    const headers = new Headers(options.headers || {});
+    if (method !== 'GET' && csrfToken) headers.set('X-CSRF-Token', csrfToken);
+    const response = await nativeFetch(url, { ...options, headers, credentials: 'same-origin' });
+    if (response.status === 401 && url !== '/api/child/pair') showPairingForm();
+    return response;
+  };
+}
 
 // Danh sách ứng dụng cài sẵn và phân loại (Đã loại bỏ hoàn toàn các ứng dụng lỗi Zing MP3, Duolingo)
-const APPS = [
-  { id: 'google_search', name: 'Google Tìm Kiếm', category: 'study', icon: '🔍',
-    desc: 'Tìm kiếm với SafeSearch', url: 'https://www.google.com/search?safe=active&igu=1',
-    type: 'web', allowed: true }
-];
+// Danh mục ứng dụng của trẻ. Hiện để trống: tìm kiếm đi qua thanh tìm kiếm (luôn SafeSearch).
+// Khi thêm app: { id, name, category: 'study'|..., icon, desc, url, type: 'web'|'desktop', allowed: true }
+const APPS = [];
 
 // Danh sách domain bị chặn mặc định (Mạng xã hội, video giải trí độc hại, web cờ bạc/đen, game cấm)
 const DEFAULT_BLOCKED_DOMAINS = [
@@ -109,38 +129,85 @@ function checkRestrictedKeyword(query) {
 document.addEventListener('DOMContentLoaded', async () => {
   renderApps();
   setupEventListeners();
-  await checkInitializationStatus();
-  await loadInitialPolicy();
-  connectWebSocket();
   startClockTicker();
-  syncUsage();
-  setInterval(() => syncUsage(), 5000);
+  if (await checkInitializationStatus()) startSession();
 });
 
-// Kiểm tra trạng thái khởi tạo từ phụ huynh (Waiting State)
+let sessionStarted = false;
+function startSession() {
+  if (sessionStarted) return;
+  sessionStarted = true;
+  loadInitialPolicy();
+  connectWebSocket();
+  syncUsage();
+  setInterval(() => syncUsage(), 5000);
+}
+
+// Kiểm tra phiên ghép đôi của cổng học tập và trạng thái thiết lập của phụ huynh
 async function checkInitializationStatus() {
   try {
-    const res = await fetch(`/api/auth/status/${childId}?t=${Date.now()}`);
-    if (res.ok) {
-      const data = await res.json();
-      if (data.child_name) {
-        const nameEl = document.getElementById('childNameDisplay');
-        if (nameEl) nameEl.innerText = data.child_name;
-        document.title = `Người Bạn Đồng Hành — Trạm Học Tập (${data.child_name})`;
-      }
-      if (data.lock_pin) {
-        configuredParentPin = String(data.lock_pin).trim();
-      }
-      // TRƯỜNG HỢP A: Hệ thống chưa có Tên bé hoặc chưa có PIN -> GIỮ NGUYÊN MÀN HÌNH CHỜ
-      if (!data.is_initialized || !data.has_pin || !data.child_name || !data.child_name.trim()) {
-        showWaitingScreen();
-      } else {
-        // TRƯỜNG HỢP B: Đã có tên bé và PIN
-        hideWaitingScreen();
-      }
+    const res = await fetch('/api/child/session');
+    if (!res.ok) {
+      showPairingForm();
+      return false;
     }
+    const data = await res.json();
+    childId = data.child_id;
+    csrfToken = data.csrf_token;
+    setChildName(data.child_name);
+    if (data.is_initialized) hideWaitingScreen();
+    else showWaitingScreen();
+    return true;
   } catch (e) {
     showWaitingScreen();
+    return false;
+  }
+}
+
+function setChildName(name) {
+  if (!name) return;
+  const nameEl = document.getElementById('childNameDisplay');
+  if (nameEl) nameEl.innerText = name;
+  document.title = `Người Bạn Đồng Hành — Trạm Học Tập (${name})`;
+}
+
+function showPairingForm() {
+  showWaitingScreen();
+  const form = document.getElementById('pairingForm');
+  if (form) form.hidden = false;
+  const text = document.getElementById('waitingScreenText');
+  if (text) text.innerText = 'Máy này chưa được ghép đôi với tài khoản của ba mẹ.';
+}
+
+async function submitPairingCode() {
+  const input = document.getElementById('pairingCodeInput');
+  const error = document.getElementById('pairingError');
+  const code = (input?.value || '').trim().toUpperCase();
+  if (code.length !== 8) {
+    error.innerText = 'Mã ghép đôi gồm 8 ký tự.';
+    error.hidden = false;
+    return;
+  }
+  try {
+    const res = await fetch('/api/child/pair', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      error.innerText = data.detail || 'Không ghép đôi được, em nhờ ba mẹ tạo mã mới nhé.';
+      error.hidden = false;
+      return;
+    }
+    error.hidden = true;
+    document.getElementById('pairingForm').hidden = true;
+    childId = data.child_id;
+    csrfToken = data.csrf_token;
+    setChildName(data.child_name);
+    if (data.is_initialized) hideWaitingScreen();
+    startSession();
+  } catch (e) {
+    error.innerText = 'Lỗi kết nối tới máy chủ.';
+    error.hidden = false;
   }
 }
 
@@ -187,19 +254,97 @@ function startClockTicker() {
     }
 
     updateTimeDisplay();
+    tickGracePeriod();
+    tickEyeBreak();
   }, 1000);
 }
 
+function tickEyeBreak() {
+  if (waitingForSetup || isLocked || isPaused || document.hidden) return;
+  activeSecondsSinceBreak++;
+  if (activeSecondsSinceBreak >= EYE_BREAK_SECONDS) {
+    activeSecondsSinceBreak = 0;
+    openEyeBreakModal();
+  }
+}
+
+function openEyeBreakModal() {
+  const modal = document.getElementById('eyeBreakModal');
+  if (!modal) return;
+  modal.classList.remove('hidden');
+  modal.classList.add('flex');
+  let left = 20;
+  const counter = document.getElementById('eyeBreakSeconds');
+  const timer = setInterval(() => {
+    left = Math.max(0, left - 1);
+    if (counter) counter.innerText = left;
+    if (left === 0) clearInterval(timer);
+  }, 1000);
+}
+
+function closeEyeBreakModal() {
+  const modal = document.getElementById('eyeBreakModal');
+  if (modal) { modal.classList.add('hidden'); modal.classList.remove('flex'); }
+}
+
+function checkQuotaWarnings() {
+  if (isPaused || remainingSeconds <= 0) return;
+  hadTimeLeft = true;
+  warnedThresholds = new Set([...warnedThresholds].filter(m => remainingSeconds <= m * 60 + 60));
+  for (const minutes of [...WARNING_MINUTES].sort((a, b) => a - b)) {
+    if (remainingSeconds <= minutes * 60 && !warnedThresholds.has(minutes)) {
+      WARNING_MINUTES.filter(m => m >= minutes).forEach(m => warnedThresholds.add(m));
+      const left = Math.ceil(remainingSeconds / 60);
+      showToast(`⏳ Còn ${left} phút nữa là hết giờ hôm nay. Em nhớ lưu bài nhé!`);
+      recordEvent('quota_warning', `Còn ${left} phút`, remainingSeconds);
+      break;
+    }
+  }
+}
+
+function startGracePeriod() {
+  if (graceDeadline) return;
+  graceDeadline = Date.now() + GRACE_SECONDS * 1000;
+  const banner = document.getElementById('graceBanner');
+  if (banner) banner.hidden = false;
+  tickGracePeriod();
+}
+
+function cancelGracePeriod() {
+  graceDeadline = null;
+  const banner = document.getElementById('graceBanner');
+  if (banner) banner.hidden = true;
+}
+
+function tickGracePeriod() {
+  if (!graceDeadline) return;
+  const left = Math.max(0, Math.ceil((graceDeadline - Date.now()) / 1000));
+  const counter = document.getElementById('graceSeconds');
+  if (counter) counter.innerText = left;
+  if (left === 0) {
+    cancelGracePeriod();
+    handleTimeExpired();
+  }
+}
+
+function applyPauseState(pausedUntil) {
+  isPaused = Boolean(pausedUntil);
+  const banner = document.getElementById('pauseBanner');
+  if (banner) banner.hidden = !isPaused;
+  if (isPaused) cancelGracePeriod();
+}
+
 async function syncUsage(record = true) {
-  if (usageSyncPending) return;
+  if (usageSyncPending || !childId) return;
   usageSyncPending = true;
   try {
     const active = record && !waitingForSetup && !isLocked && (!document.hidden || window.ogkDesktop);
-    const response = await fetch(`/web-usage/${childId}`, { method: active ? 'POST' : 'GET' });
+    const response = await fetch('/api/child/web-usage', { method: active ? 'POST' : 'GET' });
     if (!response.ok) return;
     const usage = await response.json();
     remainingSeconds = usage.remaining_seconds;
     totalSeconds = usage.quota_minutes * 60;
+    applyPauseState(usage.paused_until);
     if (!waitingForSetup) {
       if (usage.lock_reason && !manuallyLocked) {
         manuallyLocked = true;
@@ -207,12 +352,28 @@ async function syncUsage(record = true) {
       } else if (usage.lock_reason === null && manuallyLocked) {
         hideLockOverlay();
       }
-      if (remainingSeconds === 0 && !isTimeExpired) {
-        handleTimeExpired();
-      } else if (remainingSeconds > 0 && isTimeExpired) {
-        isTimeExpired = false;
-        timeExpiredNotified = false;
-        if (!manuallyLocked) hideLockOverlay();
+      if (usage.schedule_blocked && !scheduleLocked && !isPaused) {
+        scheduleLocked = true;
+        cancelGracePeriod();
+        showLockOverlay("Đã đến giờ nghỉ theo lịch của ba mẹ");
+      } else if (!usage.schedule_blocked && scheduleLocked) {
+        scheduleLocked = false;
+        hideLockOverlay();
+      }
+      if (isPaused) {
+        if (isTimeExpired && !manuallyLocked) hideLockOverlay();
+      } else if (remainingSeconds === 0 && !isTimeExpired) {
+        // Đang dùng mà hết giờ: ân hạn 60 giây; mở máy khi đã hết giờ: khóa ngay.
+        if (hadTimeLeft) startGracePeriod();
+        else handleTimeExpired();
+      } else if (remainingSeconds > 0) {
+        cancelGracePeriod();
+        if (!scheduleLocked) checkQuotaWarnings();
+        if (isTimeExpired) {
+          isTimeExpired = false;
+          timeExpiredNotified = false;
+          if (!manuallyLocked) hideLockOverlay();
+        }
       }
     }
     updateTimeDisplay();
@@ -349,11 +510,12 @@ function updateTimeDisplay() {
 // --- 4. TẢI CHÍNH SÁCH TỪ SERVER ---
 async function loadInitialPolicy() {
   try {
-    const res = await fetch(`/policy/${childId}`);
+    const res = await fetch('/api/child/policy');
     if (res.ok) {
       const policy = await res.json();
       if (policy.version < currentPolicy?.version) return;
       currentPolicy = policy;
+      applyPauseState(policy.paused_until);
       applyPolicy(currentPolicy);
     }
   } catch (err) {
@@ -386,14 +548,6 @@ function applyPolicy(policy) {
     document.title = `Người Bạn Đồng Hành — Trạm Học Tập (${policy.child_name})`;
   }
 
-  // Cập nhật mã PIN phụ huynh
-  if (policy.lock_pin) {
-    configuredParentPin = String(policy.lock_pin).trim();
-  }
-
-  APPS[0].allowed = !isDomainBlocked('www.google.com');
-  APPS[0].blockReason = APPS[0].allowed ? '' : 'Google đã bị phụ huynh chặn';
-
   renderApps();
   displayedTimelineMinute = undefined;
   updateTimeDisplay();
@@ -425,6 +579,12 @@ function clearSearchInput() {
 function renderApps() {
   const grid = document.getElementById('appGrid');
   if (!grid) return;
+  const section = document.getElementById('appsSection');
+  if (section) section.hidden = APPS.length === 0; // Chưa có app nào thì ẩn cả mục, chỉ còn thanh tìm kiếm
+  if (APPS.length === 0) {
+    grid.innerHTML = '';
+    return;
+  }
 
   const rawKeyword = (document.getElementById('searchAppInput')?.value || '').trim().toLowerCase();
   const noToneKeyword = removeVietnameseTones(rawKeyword);
@@ -664,6 +824,20 @@ function isDomainBlocked(domain) {
  *   + Nếu hợp lệ: Nạp trực tiếp URL thật vào khung iframe nội bộ, thanh tiêu đề có tên trang và nút Đóng [✕].
  *   + Cấu hình Google SafeSearch tham chiếu: https://www.google.com/search?q=&safe=active&ssui=on&igu=1
  */
+// Tên các tên miền phụ huynh đã chặn (vd. "tiktok.com" → "tiktok") cũng được coi là từ khóa cấm khi trẻ gõ vào thanh tìm kiếm.
+function matchParentBlockedName(query) {
+  const raw = currentPolicy?.blocked_domains || '';
+  const domains = String(raw).split(/[\s,;]+/).map(d => d.trim().toLowerCase().replace(/^www\./, '')).filter(Boolean);
+  if (!domains.length) return '';
+  const text = normalizeQuery(removeVietnameseTones(query));
+  const words = new Set(text.split(/[^a-z0-9]+/).filter(Boolean));
+  for (const domain of domains) {
+    const label = domain.split('.')[0];
+    if (text.includes(domain) || (label.length >= 4 && words.has(label))) return domain;
+  }
+  return '';
+}
+
 function handleGoogleOrDomainSearch() {
   if (isTimeExpired || remainingSeconds <= 0 || isLocked) {
     showToast("⌛ Đã hết thời gian sử dụng hoặc máy đang khóa! Toàn bộ ứng dụng đã bị khóa.");
@@ -683,6 +857,10 @@ function handleGoogleOrDomainSearch() {
 
   // 1. KIỂM DUYỆT TỪ KHÓA TÌM KIẾM ĐẦU VÀO (KEYWORD MODERATION)
   const kwCheck = checkRestrictedKeyword(rawQuery);
+  if (!kwCheck.isRestricted) {
+    const named = matchParentBlockedName(rawQuery);
+    if (named) { kwCheck.isRestricted = true; kwCheck.matchedKeyword = named; }
+  }
   if (kwCheck.isRestricted) {
     showViolationBlockModal(rawQuery, "keyword");
     triggerViolationAlert(rawQuery, "keyword", "Từ khóa cấm");
@@ -720,6 +898,7 @@ function openInAppBrowser(url, title) {
       isDomainBlocked(search.hostname)) {
     showViolationBlockModal(search.hostname, 'web');
     triggerViolationAlert(search.hostname, 'web');
+    logAccess(search.hostname, 'Trang web', 'blocked');
     return;
   }
 
@@ -781,19 +960,33 @@ function closeViolationBlockModal() {
 
 // Ghi nhận nhật ký truy cập vào cơ sở dữ liệu
 function logAccess(targetName, targetType, status) {
-  try {
-    fetch('/api/access-log', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        child_id: childId,
-        device_id: 'CHILD-PC',
-        target_name: String(targetName || 'Không xác định'),
-        target_type: String(targetType || 'Trang web'),
-        status: String(status || 'allowed')
-      })
-    }).catch(() => {});
-  } catch (e) {}
+  if (!childId) return;
+  fetch('/api/child/access-log', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      target_name: String(targetName || 'Không xác định').slice(0, 255),
+      target_type: String(targetType || 'Trang web'),
+      status: status === 'blocked' ? 'blocked' : 'allowed'
+    })
+  }).catch(() => {});
+}
+
+// Ghi một sự kiện chuẩn 7 trường (kèm khóa chống trùng)
+function recordEvent(type, subject, durationSec = 0) {
+  if (!childId) return;
+  fetch('/api/child/events', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify([{
+      ts: new Date().toISOString(),
+      type,
+      subject: String(subject || '').slice(0, 255),
+      duration_sec: Math.max(0, Math.round(durationSec)),
+      policy_id: currentPolicy?.id || null,
+      idempotency_key: `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`
+    }])
+  }).catch(() => {});
 }
 
 // Bắn sự kiện cảnh báo vi phạm thời gian thực về Phụ huynh qua WebSocket
@@ -811,26 +1004,7 @@ function triggerViolationAlert(targetName, targetType, violationType = "Từ kh�
     }));
   }
 
-  // Ghi nhận sự kiện vào database thông qua API
-  try {
-    let eventType = 'blocked_domain';
-    if (targetType === 'app') eventType = 'blocked_app';
-    else if (targetType === 'query_filter' || targetType === 'keyword') eventType = 'query_filter';
-
-    fetch('/events/', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ts: new Date().toISOString(),
-        device_id: 'CHILD-PC',
-        child_id: childId,
-        type: eventType,
-        subject: targetName,
-        duration_sec: 0,
-        policy_id: currentPolicy?.id || 1
-      })
-    }).catch(() => {});
-  } catch (e) {}
+  // Sự kiện chặn do logAccess() ghi (máy chủ tự tạo đúng một sự kiện) nên không ghi thêm ở đây, tránh đếm đôi.
 }
 
 // --- 7. CƠ CHẾ IN-PAGE LOCK OVERLAY (SỬA DỨT ĐIỂM FULLSCREEN BUG) ---
@@ -865,12 +1039,16 @@ function showLockOverlay(reason = "Đã hết thời gian sử dụng hoặc ba 
 
 function hideLockOverlay() {
   manuallyLocked = false;
-  if (remainingSeconds <= 0) {
+  if (scheduleLocked) {
+    showToast("⏰ Đang là giờ nghỉ theo lịch của ba mẹ, chưa mở lại được.");
+    return;
+  }
+  if (remainingSeconds <= 0 && !isPaused) {
     if (!isTimeExpired) handleTimeExpired();
     return;
   }
   isLocked = false;
-  if (remainingSeconds > 0) {
+  if (remainingSeconds > 0 || isPaused) {
     isTimeExpired = false;
     timeExpiredNotified = false;
     enableAppInteractions();
@@ -893,18 +1071,20 @@ async function verifyParentPin() {
   }
 
   try {
-    const res = await fetch('/api/settings/verify-pin', {
+    const res = await fetch('/api/child/verify-pin', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ child_id: childId, pin: pin, unlock_window: true })
+      body: JSON.stringify({ pin: pin, unlock_window: true })
     });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.valid) {
-        if (pin) configuredParentPin = pin;
-        hideLockOverlay();
-        return;
-      }
+    const data = await res.json();
+    if (res.ok && data.valid) {
+      hideLockOverlay();
+      return;
+    }
+    if (res.status === 423 || res.status === 429) {
+      showToast(`⛔ ${data.detail}`);
+      if (pinInput) pinInput.value = '';
+      return;
     }
   } catch (e) {
     console.error("Lỗi xác thực PIN từ server:", e);
@@ -930,11 +1110,10 @@ function closeRequestTimeModal() {
 
 async function submitTimeRequest(minutes, reasonText) {
   try {
-    const res = await fetch('/requests/', {
+    const res = await fetch('/api/child/time-requests', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        child_id: childId,
         requested_minutes: minutes,
         reason: reasonText || `Bé xin thêm ${minutes} phút học tập`
       })
@@ -956,8 +1135,7 @@ function connectWebSocket() {
   if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const host = window.location.host;
-  const clientGuid = `child_web_${Math.random().toString(36).substring(2, 8)}`;
-  const wsUrl = `${protocol}//${host}/ws/child/${clientGuid}`;
+  const wsUrl = `${protocol}//${host}/ws/child`;
 
   try {
     ws = new WebSocket(wsUrl);
@@ -1018,29 +1196,17 @@ function connectWebSocket() {
         else if (cmd === 'stop_screen_share') {
           stopScreenShare();
         }
-        // 8. Tín hiệu Phụ huynh HOÀN TẤT KHỞI TẠO BAN ĐẦU (Tên & PIN)
-        else if (cmd === 'init_completed') {
-          const newName = data.child_name || 'Bé yêu';
-          const nameEl = document.getElementById('childNameDisplay');
-          if (nameEl) nameEl.innerText = newName;
-          document.title = `Người Bạn Đồng Hành — Trạm Học Tập (${newName})`;
-          if (data.lock_pin) {
-            configuredParentPin = String(data.lock_pin).trim();
-          }
-          hideWaitingScreen();
-          showToast(`🎉 Ba mẹ đã hoàn tất thiết lập! Chào mừng ${newName} đến với Trạm Học Tập!`);
-        }
-        // 9. Phụ huynh cập nhật tên bé hoặc mã PIN bảo mật
+        // 8. Phụ huynh cập nhật hồ sơ của con
         else if (cmd === 'settings_updated') {
           if (data.child_name) {
-            const nameEl = document.getElementById('childNameDisplay');
-            if (nameEl) nameEl.innerText = data.child_name;
-            document.title = `Người Bạn Đồng Hành — Trạm Học Tập (${data.child_name})`;
-            showToast(`🔔 Ba Mẹ đã cập nhật: Tên của con là "${data.child_name}"`);
+            setChildName(data.child_name);
+            showToast(`🔔 Ba Mẹ đã cập nhật hồ sơ: "${data.child_name}"`);
           }
-          if (data.lock_pin) {
-            configuredParentPin = String(data.lock_pin).trim();
-          }
+          if (waitingForSetup) checkInitializationStatus();
+        }
+        // 9. Phụ huynh hủy phiên của cổng học tập
+        else if (cmd === 'session_revoked') {
+          showPairingForm();
         }
         // 10. Tin nhắn Chat thời gian thực từ Phụ huynh (Hoạt động cả khi máy con bị khóa)
         else if (cmd === 'chat_message') {
@@ -1071,8 +1237,12 @@ function connectWebSocket() {
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       stopScreenShare();
+      if (event && event.code === 4401) {
+        showPairingForm();
+        return;
+      }
       console.warn("[WS] Mất kết nối WebSocket, đang thử kết nối lại sau 3s...");
       const wsBadge = document.getElementById('wsStatusBadge');
       if (wsBadge) {
@@ -1450,6 +1620,54 @@ function escapeHtml(str) {
     .replace(/'/g, '&#039;');
 }
 
+// --- 12b. MÀN HÌNH MINH BẠCH CHO TRẺ ---
+function openModalById(id) {
+  const modal = document.getElementById(id);
+  if (modal) { modal.classList.remove('hidden'); modal.classList.add('flex'); }
+}
+
+function closeModalById(id) {
+  const modal = document.getElementById(id);
+  if (modal) { modal.classList.add('hidden'); modal.classList.remove('flex'); }
+}
+
+async function openTodayActivityModal() {
+  openModalById('todayActivityModal');
+  try {
+    const res = await fetch('/api/child/today');
+    if (!res.ok) return;
+    const data = await res.json();
+    document.getElementById('todaySummaryText').innerText =
+      `Hôm nay em đã dùng máy ${data.used_minutes} phút trên tổng ${data.quota_minutes} phút, còn ${data.remaining_minutes} phút.`;
+    const item = (icon, title, detail, blocked) =>
+      `<li class="flex justify-between bg-slate-800/60 rounded-xl px-3 py-2"><span>${icon} ${escapeHtml(title)}</span><span class="${blocked ? 'text-rose-300' : 'text-slate-300'}">${detail}</span></li>`;
+    document.getElementById('todayAppsList').innerHTML = data.apps.map(app =>
+      item('🧩', app.name, app.blocked ? `bị chặn ${app.blocked} lần` : `${Math.round(app.minutes)} phút`, app.blocked)).join('')
+      || '<li class="text-slate-400 italic">Chưa dùng ứng dụng nào.</li>';
+    document.getElementById('todayWebsitesList').innerHTML = data.websites.map(site =>
+      item('🌐', site.domain, site.blocked ? `bị chặn ${site.blocked} lần` : `${site.visits} lượt`, site.blocked)).join('')
+      || '<li class="text-slate-400 italic">Chưa vào trang web nào.</li>';
+  } catch (e) {}
+}
+
+function closeTodayActivityModal() { closeModalById('todayActivityModal'); }
+
+async function openAuditLogModal() {
+  openModalById('auditLogModal');
+  try {
+    const res = await fetch('/api/child/audit-log');
+    if (!res.ok) return;
+    const entries = await res.json();
+    document.getElementById('childAuditList').innerHTML = entries.map(entry => `
+      <li class="bg-slate-800/60 rounded-xl px-3 py-2">
+        <div class="font-bold text-white">${escapeHtml(entry.action_label)}</div>
+        <div class="text-xs text-slate-400">${new Date(entry.ts).toLocaleString('vi-VN')} · ${escapeHtml(entry.actor_name || (entry.actor_role === 'child-view' ? 'Em' : 'Ba mẹ'))}</div>
+      </li>`).join('') || '<li class="text-slate-400 italic">Ba mẹ chưa thay đổi gì.</li>';
+  } catch (e) {}
+}
+
+function closeAuditLogModal() { closeModalById('auditLogModal'); }
+
 // --- 13. XỬ LÝ ĐÓNG MODAL QUA PHÍM ESCAPE & BACKDROP CLICK ---
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' || e.key === 'Esc') {
@@ -1458,6 +1676,9 @@ window.addEventListener('keydown', (e) => {
     closeRequestTimeModal();
     closeMockAppModal();
     closeViolationBlockModal();
+    closeTodayActivityModal();
+    closeAuditLogModal();
+    closeEyeBreakModal();
     const consentModal = document.getElementById('screenConsentModal');
     if (consentModal && consentModal.style.display !== 'none' && !consentModal.classList.contains('hidden')) {
       respondScreenConsent(false);
@@ -1470,5 +1691,7 @@ document.addEventListener('click', (e) => {
   if (e.target.id === 'requestTimeModal') closeRequestTimeModal();
   if (e.target.id === 'mockAppModal') closeMockAppModal();
   if (e.target.id === 'violationBlockModal') closeViolationBlockModal();
+  if (e.target.id === 'todayActivityModal') closeTodayActivityModal();
+  if (e.target.id === 'auditLogModal') closeAuditLogModal();
   if (e.target.id === 'screenConsentModal') respondScreenConsent(false);
 });

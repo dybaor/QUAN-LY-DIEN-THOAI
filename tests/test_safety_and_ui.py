@@ -22,9 +22,6 @@ for p in [str(BASE_DIR), str(SERVER_DIR)]:
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from app.database import SessionLocal
-from app.models import Policy
-from app.routers.policy_events import verify_pin, VerifyPinSchema
 from app.main import app
 
 
@@ -33,10 +30,6 @@ class TestSafetyAndUI(unittest.TestCase):
     def setUp(self):
         from app.websocket_manager import manager
         manager.active_connections.clear()
-        self.db = SessionLocal()
-
-    def tearDown(self):
-        self.db.close()
 
     # =========================================================================
     # CA 1: GỠ BỎ HOÀN TOÀN ROUTE PROXY SEARCH (/api/search)
@@ -88,11 +81,12 @@ class TestSafetyAndUI(unittest.TestCase):
         child_js_path = SERVER_DIR / "static" / "js" / "child.js"
         child_js = child_js_path.read_text(encoding="utf-8")
         
-        # 1. App Google Tìm Kiếm cài sẵn trong danh mục với tham số igu=1
-        self.assertIn("google_search", child_js, "Kho APPS phải có biểu tượng Google Tìm Kiếm")
-        self.assertIn("https://www.google.com/search?safe=active&igu=1", child_js,
-                      "Google Tìm Kiếm phải dùng link trực tiếp có igu=1 để nhúng iframe không bị trắng màn hình")
-        
+        # 1. Không còn app Google trùng chức năng; tìm kiếm chỉ đi qua thanh tìm kiếm với SafeSearch + igu=1
+        self.assertNotIn("google_search", child_js, "App Google phải được gỡ, chỉ giữ thanh tìm kiếm")
+        self.assertIn("const APPS = [];", child_js)
+        self.assertIn("safe: 'active'", child_js, "Thanh tìm kiếm phải ép SafeSearch")
+        self.assertIn("igu: '1'", child_js, "Nhúng iframe Google cần igu=1 để không trắng màn hình")
+
         # 2. Bước 1: Trích xuất tên miền
         self.assertIn("function extractDomain(", child_js, "Phải có hàm trích xuất tên miền extractDomain()")
         
@@ -128,8 +122,8 @@ class TestSafetyAndUI(unittest.TestCase):
         self.assertIn('id="floatingChatBtn"', child_html)
         self.assertIn('id="floatingChatWindow"', child_html)
         
-        # 2. Kiểm tra dashboard.html và index.html
-        for filename in ["dashboard.html", "index.html"]:
+        # 2. Kiểm tra dashboard.html
+        for filename in ["dashboard.html"]:
             dashboard_html = (SERVER_DIR / "templates" / filename).read_text(encoding="utf-8")
             self.assertIn('id="dailyScheduleModal"', dashboard_html)
             self.assertIn('closeDailyScheduleModal()', dashboard_html)
@@ -137,39 +131,6 @@ class TestSafetyAndUI(unittest.TestCase):
             self.assertIn('closeBedtimeConfigModal()', dashboard_html)
             self.assertIn('id="violationDetailModal"', dashboard_html)
             self.assertIn('closeViolationDetailModal()', dashboard_html)
-
-    # =========================================================================
-    # CA 5: XÁC THỰC PHỤ HUYNH & MÀN HÌNH CHỜ TRANG CON (AUTH & SPLASH)
-    # =========================================================================
-    def test_case_5_parent_auth_gate_and_child_splash_transition(self):
-        """Kiểm tra:
-        - Màn hình Auth/Onboarding bảo vệ Dashboard phụ huynh, không cho tắt modal nếu chưa xác thực
-        - Xác thực PIN trả về hợp lệ và kích hoạt WebSocket init_completed
-        - Cửa sổ trẻ em có waitingScreenState và lắng nghe init_completed để mở giao diện
-        """
-        # 1. API Verify PIN
-        policy = self.db.query(Policy).filter(Policy.child_id == 1).first()
-        policy.lock_pin = "8888"
-        self.db.commit()
-
-        res = verify_pin(VerifyPinSchema(child_id=1, pin="8888"), db=self.db)
-        self.assertTrue(res["valid"])
-        self.assertTrue(res["verified"])
-        self.assertEqual(res["status"], "success")
-
-        # 2. Kiểm tra template phụ huynh
-        dashboard_html = (SERVER_DIR / "templates" / "dashboard.html").read_text(encoding="utf-8")
-        self.assertIn('id="onboardingModal"', dashboard_html)
-        self.assertIn('ogk_parent_auth', dashboard_html)
-        self.assertIn('checkAuthOrOnboarding()', dashboard_html)
-
-        # 3. Kiểm tra template trẻ em
-        child_html = (SERVER_DIR / "templates" / "child_portal.html").read_text(encoding="utf-8")
-        self.assertIn('id="waitingScreenState"', child_html)
-
-        child_js = (SERVER_DIR / "static" / "js" / "child.js").read_text(encoding="utf-8")
-        self.assertIn("init_completed", child_js)
-        self.assertIn("hideWaitingScreen", child_js)
 
     # =========================================================================
     # CA 6: BỘ LỌC 2 TẦNG (TỪ KHÓA & TÊN MIỀN) & CẢNH BÁO TỨC THÌ
@@ -189,113 +150,44 @@ class TestSafetyAndUI(unittest.TestCase):
         self.assertIn("playWarningChime", dashboard_html)
         self.assertIn("Cảnh báo vi phạm! Bé vừa tìm kiếm/truy cập", dashboard_html)
 
-    # =========================================================================
-    # CA 7: LỊCH SỬ QUAN SÁT MÀN HÌNH (SCREEN MONITORING AUDIT LOG)
-    # =========================================================================
-    def test_case_7_screen_monitoring_audit_log(self):
-        """Kiểm tra:
-        - API Start/Stop monitoring session
-        - API Get monitoring history
-        - Bảng Lịch sử quan sát màn hình trên dashboard
-        """
-        from app.routers.policy_events import start_monitoring_session, stop_monitoring_session, get_monitoring_history, MonitoringStartSchema, MonitoringStopSchema
 
-        # 1. Bắt đầu phiên
-        start_res = start_monitoring_session(MonitoringStartSchema(child_id=1, device_id="TEST-PC"), db=self.db)
-        self.assertEqual(start_res["status"], "success")
-        session_id = start_res["session_id"]
 
-        # 2. Lấy lịch sử thấy đang theo dõi
-        hist = get_monitoring_history(child_id=1, db=self.db)
-        self.assertTrue(len(hist) > 0)
-        self.assertEqual(hist[0]["status"], "Đang theo dõi")
+def test_case_5_parent_auth_gate_and_child_pairing_screen():
+    """Dashboard bắt buộc đăng nhập tài khoản phụ huynh; cổng trẻ có màn hình chờ + ghép đôi bằng mã."""
+    dashboard_html = (SERVER_DIR / "templates" / "dashboard.html").read_text(encoding="utf-8")
+    assert 'id="onboardingModal"' in dashboard_html
+    assert 'checkAuthOrOnboarding()' in dashboard_html
+    assert '/api/auth/login' in dashboard_html and '/api/auth/register' in dashboard_html
+    assert 'sessionStorage' not in dashboard_html, "Không được dùng sessionStorage làm cơ chế xác thực"
+    assert 'X-CSRF-Token' in dashboard_html
+    child_html = (SERVER_DIR / "templates" / "child_portal.html").read_text(encoding="utf-8")
+    assert 'id="waitingScreenState"' in child_html and 'id="pairingForm"' in child_html
+    child_js = (SERVER_DIR / "static" / "js" / "child.js").read_text(encoding="utf-8")
+    assert "submitPairingCode" in child_js and "hideWaitingScreen" in child_js
+    assert "lock_pin" not in child_js, "Cổng trẻ không bao giờ nhận mã PIN"
 
-        # 3. Kết thúc phiên
-        stop_res = stop_monitoring_session(MonitoringStopSchema(session_id=session_id, child_id=1), db=self.db)
-        self.assertEqual(stop_res["status"], "success")
 
-        hist_after = get_monitoring_history(child_id=1, db=self.db)
-        self.assertEqual(hist_after[0]["status"], "Đã kết thúc")
+def test_case_7_screen_monitoring_history(parent):
+    cid = parent.child_id
+    start = parent.client.post("/api/monitoring/start", json={"child_id": cid, "device_id": "TEST-PC"}).json()
+    assert start["status"] == "success"
+    assert parent.client.get(f"/api/monitoring/history/{cid}").json()[0]["status"] == "Đang theo dõi"
+    stop = parent.client.post("/api/monitoring/stop", json={"child_id": cid, "session_id": start["session_id"]}).json()
+    assert stop["status"] == "success"
+    assert parent.client.get(f"/api/monitoring/history/{cid}").json()[0]["status"] == "Đã kết thúc"
+    dashboard_html = (SERVER_DIR / "templates" / "dashboard.html").read_text(encoding="utf-8")
+    assert 'id="monitoringHistoryTableBody"' in dashboard_html and 'loadMonitoringHistory()' in dashboard_html
 
-        # 4. Kiểm tra UI Dashboard
-        dashboard_html = (SERVER_DIR / "templates" / "dashboard.html").read_text(encoding="utf-8")
-        self.assertIn('id="monitoringHistoryTableBody"', dashboard_html)
-        self.assertIn('loadMonitoringHistory()', dashboard_html)
 
-    # =========================================================================
-    # CA 8: NHẬT KÝ TRUY CẬP THIẾT BỊ (CHILD ACCESS HISTORY)
-    # =========================================================================
-    def test_case_8_child_access_history(self):
-        """Kiểm tra:
-        - API ghi nhận access log (allowed và blocked)
-        - API lấy danh sách access history
-        - Bảng Nhật ký truy cập thiết bị trên dashboard
-        """
-        from app.routers.policy_events import create_access_log, get_access_history, AccessLogCreateSchema
-
-        # Ghi log hợp lệ
-        log1 = create_access_log(AccessLogCreateSchema(
-            child_id=1, device_id="TEST-PC", target_name="Khan Academy", target_type="Trang web", status="allowed"
-        ), db=self.db)
-        self.assertEqual(log1["status"], "success")
-
-        # Ghi log bị chặn
-        log2 = create_access_log(AccessLogCreateSchema(
-            child_id=1, device_id="TEST-PC", target_name="88bet.com", target_type="Trang web", status="blocked"
-        ), db=self.db)
-        self.assertEqual(log2["status"], "success")
-
-        # Lấy danh sách lịch sử
-        history = get_access_history(child_id=1, db=self.db)
-        self.assertTrue(len(history) >= 2)
-        target_names = [h["target_name"] for h in history]
-        self.assertIn("Khan Academy", target_names)
-        self.assertIn("88bet.com", target_names)
-
-        # Kiểm tra UI Dashboard
-        dashboard_html = (SERVER_DIR / "templates" / "dashboard.html").read_text(encoding="utf-8")
-        self.assertIn('id="accessHistoryTableBody"', dashboard_html)
-        self.assertIn('loadAccessHistory()', dashboard_html)
-
-    # =========================================================================
-    # CA 9: LUỒNG KHỞI TẠO RẠCH RÒI CASE A VÀ CASE B
-    # =========================================================================
-    def test_case_9_initialization_flow_and_clean_state(self):
-        """Kiểm tra:
-        - Hệ thống chưa có PIN và Tên bé là Case A (is_initialized = False)
-        - Cấu hình lần đầu chuyển sang Case B (is_initialized = True)
-        - Clean state reset đưa về Case A sạch sẽ
-        """
-        from app.routers.policy_events import get_auth_settings, reset_system_state
-
-        # 1. Reset về trạng thái sạch (Case A)
-        res_reset = reset_system_state(db=self.db)
-        self.assertEqual(res_reset["status"], "success")
-
-        # 2. Kiểm tra Case A: Chưa có PIN và Tên bé
-        status_a = get_auth_settings(child_id=1, db=self.db)
-        self.assertFalse(status_a["is_initialized"], "Hệ thống mới phải có is_initialized = False")
-        self.assertFalse(status_a["has_pin"], "Hệ thống mới chưa có PIN")
-        self.assertEqual(status_a["child_name"], "", "Hệ thống mới Tên bé phải là rỗng, không được hardcode Bé An")
-
-        # 3. Phụ huynh khởi tạo lần đầu: Tên 'Bé Bo', PIN '8888'
-        policy = self.db.query(Policy).filter(Policy.child_id == 1).first()
-        policy.child_name = "Bé Bo"
-        policy.lock_pin = "8888"
-        self.db.commit()
-
-        # 4. Kiểm tra Case B: Đã có PIN và Tên bé
-        status_b = get_auth_settings(child_id=1, db=self.db)
-        self.assertTrue(status_b["is_initialized"], "Sau khởi tạo phải chuyển sang Case B (is_initialized = True)")
-        self.assertTrue(status_b["has_pin"])
-        self.assertEqual(status_b["child_name"], "Bé Bo")
-
-        # 5. Dọn dẹp trả về Clean State ban đầu (Case A) để phục vụ chạy ứng dụng thật
-        reset_system_state(db=self.db)
-        status_clean = get_auth_settings(child_id=1, db=self.db)
-        self.assertFalse(status_clean["is_initialized"])
-        self.assertEqual(status_clean["child_name"], "")
-        self.assertEqual(status_clean["lock_pin"], "")
+def test_case_8_child_access_history(parent, portal):
+    for name, state in (("Khan Academy", "allowed"), ("88bet.com", "blocked")):
+        resp = portal.client.post("/api/child/access-log", json={"target_name": name, "target_type": "Trang web", "status": state})
+        assert resp.json()["status"] == "success"
+    history = parent.client.get(f"/api/access-history/{parent.child_id}").json()
+    names = [h["target_name"] for h in history]
+    assert "Khan Academy" in names and "88bet.com" in names
+    dashboard_html = (SERVER_DIR / "templates" / "dashboard.html").read_text(encoding="utf-8")
+    assert 'id="accessHistoryTableBody"' in dashboard_html and 'loadAccessHistory()' in dashboard_html
 
 
 if __name__ == "__main__":

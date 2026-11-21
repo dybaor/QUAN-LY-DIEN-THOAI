@@ -10,21 +10,19 @@ Thư mục `dist_package/` (hoặc file nén `dist/OGK_Deploy_Package_x64.zip`) 
 
 ```text
 dist_package/
-├── Start_App.bat              # [1-CLICK LAUNCHER] Bật Server + Web Dashboard + Agent + Child UI
-├── Stop_App.bat               # [1-CLICK SHUTDOWN] Tắt sạch sẽ toàn bộ dịch vụ khi kết thúc
+├── Start_App.bat              # Launcher duy nhất: --server-only, --with-agent, --with-dns, --reset, --stop
 │
-├── ogk_server.exe             # Máy chủ Web Dashboard (FastAPI + Uvicorn + SQLite WAL, ~24 MB)
-├── agent_service.exe          # Service giám sát máy con (Chặn SHA-256, đo giờ, khóa máy, ~15 MB)
-├── child_client.exe           # Giao diện Máy Con (Xem hạn mức, Xin thêm giờ, Đồng thuận giám sát, ~25 MB)
-├── dns_proxy.exe              # Máy chủ DNS Proxy lọc mạng UDP port 53 (~14 MB)
+├── ogk_server.exe             # Máy chủ OGK + Dashboard phụ huynh + Cổng học tập của trẻ
+├── agent_service.exe          # Agent (Windows Service; lệnh enroll / debug / uninstall)
+├── ogk_tray.exe               # Biểu tượng khay hệ thống bắt buộc trong phiên của trẻ
+├── dns_proxy.exe              # DNS Proxy UDP 53: 6 nhóm nội dung, SafeSearch, chặn DoH
 │
 ├── templates/                 # Giao diện Web Dashboard HTML5/Tailwind/Chart.js
 │   └── dashboard.html         # Trang quản trị phụ huynh 100% trực quan
 │
 ├── blocklist.json             # Danh mục hơn 200 tên miền web đen & DoH Canary
-├── install_service.bat        # Đăng ký Agent làm Windows Service LocalSystem (Auto restart 5s - M5)
-├── uninstall_service.bat      # Gỡ bỏ sạch sẽ Windows Service khỏi hệ thống
-├── start_proxy.bat            # Khởi chạy DNS Proxy Server (yêu cầu Admin)
+├── install_service.bat        # Ghép đôi + Windows Service LocalSystem (tự khởi động lại 5s) + khay hệ thống
+├── uninstall_service.bat      # Gỡ cài đặt (bắt buộc tài khoản phụ huynh, có audit log)
 ├── SHA256SUMS.txt             # Bảng mã băm xác thực tính toàn vẹn phần mềm
 └── HUONG_DAN_CAI_DAT.txt      # Tóm tắt các bước chạy nhanh dưới 5 phút
 ```
@@ -40,9 +38,9 @@ dist_package/
    - File `ogk_server.exe` tự khởi động ngầm.
    - Trình duyệt web mặc định (Chrome, Edge) **tự động mở thẳng** địa chỉ:
      👉 **`http://127.0.0.1:8000`**
-   - File `agent_service.exe` tự khởi động ngầm và kết nối WebSocket tức thì về Server.
-   - Huy hiệu kết nối ở góc phải Web Dashboard lập tức chuyển sang:
-     🟢 **"Trực tuyến (Realtime WebSocket)"**.
+   - Lần đầu, Dashboard yêu cầu tạo tài khoản phụ huynh (mật khẩu ≥ 10 ký tự) và hồ sơ trẻ.
+   - Để chạy kèm Agent debug: `Start_App.bat --with-agent` (máy cần ghép đôi trước bằng
+     `agent_service.exe enroll <MÃ>` với mã tạo ở mục "Thiết bị của trẻ").
 
 ---
 
@@ -54,7 +52,7 @@ Nếu muốn kiểm tra từng file thực thi độc lập:
 2. **Chạy Agent giám sát máy con:**
    - Nhấp đúp vào **`agent_service.exe`** (hoặc chạy qua `install_service.bat` bằng chuột phải chọn *Run as administrator* để đăng ký thành Windows Service).
 3. **Chạy DNS Proxy lọc mạng:**
-   - Chuột phải vào **`start_proxy.bat`** -> chọn **"Run as administrator"** (do mở cổng mạng UDP 53 yêu cầu quyền Admin).
+   - Mở Command Prompt bằng **"Run as administrator"** và chạy `Start_App.bat --with-dns` (cổng UDP 53 cần quyền Admin).
 
 ---
 
@@ -156,7 +154,7 @@ Kịch bản dưới đây được thiết kế để gây ấn tượng mạnh
 ---
 
 ### 🎯 BƯỚC 7: Tắt toàn bộ hệ thống khi kết thúc
-Nhấp đúp chuột vào file **`Stop_App.bat`**: Toàn bộ tiến trình nền (Server, Agent, Child Launcher, Proxy) lập tức được giải phóng an toàn và sạch sẽ.
+Chạy **`Start_App.bat --stop`**: máy chủ, Agent debug và DNS Proxy đều được dừng.
 
 ---
 
